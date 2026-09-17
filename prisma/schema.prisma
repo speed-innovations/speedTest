@@ -1,0 +1,328 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  APP_ADMIN
+  COLLEGE_COORDINATOR
+  STUDENT
+}
+
+enum AssessmentArea {
+  APTITUDE
+  DOTNET
+  COMMUNICATION
+  AI
+  PYTHON
+  JAVA
+  JAVASCRIPT
+  SQL
+}
+
+enum TestStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum CandidateStatus {
+  REGISTERED
+  APPEARED
+  SHORTLISTED
+  REJECTED
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  password      String
+  role          Role
+  isActive      Boolean   @default(true)
+  mustResetPassword Boolean @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  college       College?  @relation("CollegeCoordinator", fields: [collegeId], references: [id])
+  collegeId     String?
+
+  studentProfile StudentProfile?
+  testAttempts  TestAttempt[]
+  walkInAttempts WalkInAttempt[]
+}
+
+model College {
+  id              String    @id @default(cuid())
+  name            String
+  address         String?
+  city            String?
+  state           String?
+  contactEmail    String?
+  contactPhone    String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  coordinators    User[]    @relation("CollegeCoordinator")
+  students        StudentProfile[]
+  testSchedules   TestSchedule[]
+  walkInTests     WalkInTestCollege[]
+}
+
+model StudentProfile {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id])
+  collegeId       String
+  college         College   @relation(fields: [collegeId], references: [id])
+
+  fullName        String
+  email           String
+  phone           String?
+  dateOfBirth     DateTime?
+  gender          String?
+
+  // Education
+  tenthMarks      Float?
+  tenthBoard      String?
+  tenthYear       Int?
+  twelfthMarks    Float?
+  twelfthBoard    String?
+  twelfthYear     Int?
+  graduationMarks Float?
+  graduationDegree String?
+  graduationYear  Int?
+  pgMarks         Float?
+  pgDegree        String?
+  pgYear          Int?
+
+  // Certifications stored as JSON
+  certifications  Json?
+
+  resumeUrl       String?
+  status          CandidateStatus @default(REGISTERED)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  testAttempts    TestAttempt[]
+  walkInAttempts  WalkInAttempt[]
+  walkInEligible  WalkInEligibleStudent[]
+}
+
+model JobOpening {
+  id              String    @id @default(cuid())
+  title           String
+  description     String?
+  requiredSkills  String[]
+  niceToHaveSkills String[]
+  location        String?
+  openings        Int       @default(1)
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tests           Test[]
+}
+
+model Test {
+  id              String    @id @default(cuid())
+  title           String
+  description     String?
+  durationMinutes Int       @default(60)
+  totalMarks      Int       @default(100)
+  passingMarks    Int       @default(40)
+  status          TestStatus @default(DRAFT)
+  isActive        Boolean   @default(true)
+  isWalkIn        Boolean   @default(false)
+  jobOpeningId    String?
+  jobOpening      JobOpening? @relation(fields: [jobOpeningId], references: [id])
+  companyPptUrl   String?
+
+  // Assessment areas with question counts
+  assessmentConfig Json     // [{area: "APTITUDE", count: 20, marks: 1}, ...]
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  schedules       TestSchedule[]
+  questions       TestQuestion[]
+  walkInAttempts  WalkInAttempt[]
+  walkInColleges  WalkInTestCollege[]
+  walkInEligible  WalkInEligibleStudent[]
+}
+
+model TestSchedule {
+  id              String    @id @default(cuid())
+  testId          String
+  test            Test      @relation(fields: [testId], references: [id])
+  collegeId       String
+  college         College   @relation(fields: [collegeId], references: [id])
+  scheduledAt     DateTime
+  endsAt          DateTime
+  instructions    String?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+
+  attempts        TestAttempt[]
+}
+
+model Question {
+  id              String    @id @default(cuid())
+  area            AssessmentArea
+  questionText    String
+  optionA         String
+  optionB         String
+  optionC         String
+  optionD         String
+  correctAnswer   String    // 'A', 'B', 'C', or 'D'
+  weightage       Float     @default(1)
+  difficulty      String    @default("MEDIUM") // EASY, MEDIUM, HARD
+  tags            String[]
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  testQuestions   TestQuestion[]
+  responses       CandidateResponse[]
+  walkInResponses WalkInResponse[]
+}
+
+model TestQuestion {
+  id          String    @id @default(cuid())
+  testId      String
+  test        Test      @relation(fields: [testId], references: [id])
+  questionId  String
+  question    Question  @relation(fields: [questionId], references: [id])
+  orderIndex  Int
+
+  @@unique([testId, questionId])
+}
+
+model TestAttempt {
+  id              String    @id @default(cuid())
+  scheduleId      String
+  schedule        TestSchedule @relation(fields: [scheduleId], references: [id])
+  studentId       String
+  student         StudentProfile @relation(fields: [studentId], references: [id])
+  userId          String
+  user            User      @relation(fields: [userId], references: [id])
+
+  startedAt       DateTime?
+  submittedAt     DateTime?
+  isSubmitted     Boolean   @default(false)
+  totalScore      Float?
+
+  // Assigned question set — persisted so resume always gets the same questions
+  questionIds     Json?     // ["cuid1", "cuid2", ...]
+
+  // Score by area stored as JSON
+  areaScores      Json?     // {APTITUDE: 18, DOTNET: 22, ...}
+
+  // Tab/browser violations
+  violations      Json?     // [{questionId, type, timestamp}, ...]
+
+  createdAt       DateTime  @default(now())
+
+  responses       CandidateResponse[]
+
+  @@unique([scheduleId, studentId])
+}
+
+model CandidateResponse {
+  id              String    @id @default(cuid())
+  attemptId       String
+  attempt         TestAttempt @relation(fields: [attemptId], references: [id])
+  questionId      String
+  question        Question  @relation(fields: [questionId], references: [id])
+  selectedAnswer  String?
+  isCorrect       Boolean?
+  marksAwarded    Float?
+  answeredAt      DateTime?
+  flagged         Boolean   @default(false) // Tab change during this question
+
+  @@unique([attemptId, questionId])
+}
+
+model ShortlistCriteria {
+  id              String    @id @default(cuid())
+  name            String
+  testId          String?
+  minTotalScore   Float?
+  minAreaScores   Json?     // {APTITUDE: 60, ...} percentage thresholds
+  minTenthMarks   Float?
+  minTwelfthMarks Float?
+  minGradMarks    Float?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+}
+
+model WalkInAttempt {
+  id              String    @id @default(cuid())
+  testId          String
+  test            Test      @relation(fields: [testId], references: [id])
+  studentId       String
+  student         StudentProfile @relation(fields: [studentId], references: [id])
+  userId          String
+  user            User      @relation(fields: [userId], references: [id])
+
+  startedAt       DateTime?
+  submittedAt     DateTime?
+  isSubmitted     Boolean   @default(false)
+  totalScore      Float?
+  questionIds     Json?     // Assigned question set — persisted for resume
+  areaScores      Json?
+  violations      Json?
+
+  createdAt       DateTime  @default(now())
+
+  responses       WalkInResponse[]
+
+  @@unique([testId, studentId])
+}
+
+model WalkInTestCollege {
+  id        String    @id @default(cuid())
+  testId    String
+  test      Test      @relation(fields: [testId], references: [id])
+  collegeId String
+  college   College   @relation(fields: [collegeId], references: [id])
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  @@unique([testId, collegeId])
+}
+
+model WalkInEligibleStudent {
+  id        String    @id @default(cuid())
+  testId    String
+  test      Test      @relation(fields: [testId], references: [id])
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id])
+  isEnabled Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  @@unique([testId, studentId])
+}
+
+model WalkInResponse {
+  id              String    @id @default(cuid())
+  attemptId       String
+  attempt         WalkInAttempt @relation(fields: [attemptId], references: [id])
+  questionId      String
+  question        Question  @relation(fields: [questionId], references: [id])
+  selectedAnswer  String?
+  isCorrect       Boolean?
+  marksAwarded    Float?
+  answeredAt      DateTime?
+  flagged         Boolean   @default(false)
+
+  @@unique([attemptId, questionId])
+}
