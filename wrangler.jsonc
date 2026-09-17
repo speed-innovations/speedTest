@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "speedtest",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-09-17",
+  // OpenNext runs the Next.js server on workerd; Prisma, pg and the rest of
+  // the Node surface need this flag. Without it the Worker fails at import.
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "speedtest"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

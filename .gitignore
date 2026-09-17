@@ -40,3 +40,8 @@ prisma/*.db-journal
 
 .vercel
 .env*.local
+
+# cloudflare / opennext
+.open-next
+.wrangler
+.dev.vars
