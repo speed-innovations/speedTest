@@ -5,7 +5,7 @@
 // ahead of `workerd` - and that file calls eval(), which workerd forbids.
 import { PrismaClient } from '@app/prisma-client'
 import { PrismaPg } from '@prisma/adapter-pg'
-import { Pool } from 'pg'
+import { Pool, type PoolConfig } from 'pg'
 import { getCloudflareContext } from '@opennextjs/cloudflare'
 
 // Prisma's default client loads a native query engine binary, which workerd
@@ -25,7 +25,7 @@ import { getCloudflareContext } from '@opennextjs/cloudflare'
  * So the only deviation from pg's defaults is the connection ceiling. pg's own
  * idle reaping is what lets the request finish; leave it alone.
  */
-function poolOptions(connectionString: string) {
+function poolOptions(connectionString: string, ssl?: PoolConfig['ssl']): PoolConfig {
   return {
     connectionString,
     // On workerd this pool serves one request and that request never runs two
@@ -33,17 +33,45 @@ function poolOptions(connectionString: string) {
     // from fanning out; pg's default of 10 would let a single request hold ten
     // sockets through Hyperdrive, and Hyperdrive caps origin connections at 20.
     max: 3,
+    // Only set on the Node path (see nodeSsl). Left undefined on workerd, where
+    // Hyperdrive - not pg - terminates origin TLS.
+    ...(ssl ? { ssl } : {}),
   }
 }
 
 // Prisma's default client loads a native query engine binary, which workerd
 // cannot execute. The pg driver adapter replaces that engine with a pure-JS
 // Postgres driver, so the same client works on Workers and on Node.
-function createClient(connectionString: string) {
+function createClient(connectionString: string, ssl?: PoolConfig['ssl']) {
   return new PrismaClient({
-    adapter: new PrismaPg(new Pool(poolOptions(connectionString))),
+    adapter: new PrismaPg(new Pool(poolOptions(connectionString, ssl))),
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   })
+}
+
+// TLS for the Node runtime only (Render, next dev, the seed script). Supabase
+// serves a leaf under its own CA - Supabase Root 2021 CA - which is not in any
+// public trust store, so a default handshake fails to verify (self-signed in
+// chain) and the only way to talk to it without pinning is to skip verification
+// entirely. Instead we pin that root: node builds leaf -> intermediate -> this
+// root and checks the *.pooler.supabase.com SAN against the host, so the link is
+// both encrypted and authenticated. The cert is a public value, carried as
+// base64 in DATABASE_CA_CERT_B64 so it survives a single-line env var.
+//
+// When the var is absent we return undefined and pg connects without TLS. That
+// is deliberate: it is the local-Postgres-over-loopback case, which needs no
+// TLS. Supabase requires TLS, so a missing cert there surfaces as a connection
+// error rather than a silent unverified connection.
+//
+// The workerd path never reaches this - it uses the Hyperdrive binding, whose
+// connection string drives createClient with no ssl argument.
+function nodeSsl(): PoolConfig['ssl'] | undefined {
+  const caB64 = process.env.DATABASE_CA_CERT_B64
+  if (!caB64) return undefined
+  return {
+    ca: Buffer.from(caB64, 'base64').toString('utf8'),
+    rejectUnauthorized: true,
+  }
 }
 type HyperdriveBinding = { connectionString?: string }
 
@@ -97,7 +125,7 @@ function activeClient(): PrismaClient {
         'No database connection available: the HYPERDRIVE binding is missing and DATABASE_URL is not set.'
       )
     }
-    globalForPrisma.prisma = createClient(url)
+    globalForPrisma.prisma = createClient(url, nodeSsl())
   }
   return globalForPrisma.prisma
 }
