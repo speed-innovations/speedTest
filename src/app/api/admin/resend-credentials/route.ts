@@ -3,13 +3,10 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import bcrypt from 'bcryptjs'
+import { generatePassword } from '@/lib/password'
 import { sendCredentialsEmail } from '@/lib/email'
 import { getLoginUrl } from '@/lib/url'
 
-function generatePassword(length = 10): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#$'
-  return Array.from({ length }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
-}
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)

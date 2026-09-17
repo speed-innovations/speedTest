@@ -216,6 +216,9 @@ model TestAttempt {
   user            User      @relation(fields: [userId], references: [id])
 
   startedAt       DateTime?
+  // Server-authoritative deadline: set when the attempt is started.
+  // min(startedAt + test.durationMinutes, schedule.endsAt). Never trust a client clock.
+  expiresAt       DateTime?
   submittedAt     DateTime?
   isSubmitted     Boolean   @default(false)
   totalScore      Float?
@@ -274,6 +277,8 @@ model WalkInAttempt {
   user            User      @relation(fields: [userId], references: [id])
 
   startedAt       DateTime?
+  // Server-authoritative deadline: startedAt + test.durationMinutes.
+  expiresAt       DateTime?
   submittedAt     DateTime?
   isSubmitted     Boolean   @default(false)
   totalScore      Float?

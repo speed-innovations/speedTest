@@ -19,6 +19,7 @@ export default function WalkInTestPage() {
   const [loading, setLoading] = useState(true)
   const [testData, setTestData] = useState<any>(null)
   const [questions, setQuestions] = useState<Question[]>([])
+  const [questionCount, setQuestionCount] = useState(0)
   const [attemptId, setAttemptId] = useState<string | null>(null)
   const [answers, setAnswers] = useState<Answer>({})
   const [currentIdx, setCurrentIdx] = useState(0)
@@ -43,18 +44,23 @@ export default function WalkInTestPage() {
         const data = JSON.parse(text)
         if (data.error) { toast.error(data.error); router.push('/student'); return }
         setTestData(data.test)
-        setQuestions(data.questions)
-        setTimeLeft(data.test.durationMinutes * 60)
-        if (data.attemptId) {
-          setAttemptId(data.attemptId)
+        setQuestions(data.questions || [])
+        setQuestionCount(data.questionCount ?? 0)
+        if (data.attemptId) setAttemptId(data.attemptId)
+
+        if (data.isSubmitted) {
+          setSubmitted(true)
+        } else if (data.started) {
+          // Resume. Remaining time is server-authoritative — a reload must not
+          // hand the student a fresh clock.
+          setTimeLeft(data.remainingSeconds ?? 0)
           const questionIds = new Set((data.questions || []).map((q: any) => q.id))
           const filtered: Record<string, string> = {}
           for (const [qId, ans] of Object.entries(data.savedAnswers || {})) {
             if (questionIds.has(qId)) filtered[qId] = ans as string
           }
           setAnswers(filtered)
-          if (data.isSubmitted) { setSubmitted(true) }
-          else { setTestStarted(true) } // Resume — go directly to test UI
+          setTestStarted(true)
         }
         setLoading(false)
       })
@@ -124,14 +130,18 @@ export default function WalkInTestPage() {
 
   async function startTest() {
     try {
+      // No body: the server chooses the question set and starts the clock.
       const res = await fetch(`/api/student/walkin-test/${testId}/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questionIds: questions.map(q => q.id) })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setAttemptId(data.attemptId)
+      setQuestions(data.questions || [])
+      setQuestionCount((data.questions || []).length)
+      setAnswers(data.savedAnswers || {})
+      setTimeLeft(data.remainingSeconds ?? 0)
       setTestStarted(true)
       startTimeRef.current = Date.now()
     } catch (err: any) {
@@ -291,7 +301,7 @@ export default function WalkInTestPage() {
           <div className="space-y-3 mb-6">
             {[
               ['Duration', `${testData?.durationMinutes} minutes`],
-              ['Total Questions', `${questions.length} questions`],
+              ['Total Questions', `${questionCount} questions`],
               ['Total Marks', `${testData?.totalMarks} marks`],
               ['Passing Marks', `${testData?.passingMarks} marks`],
             ].map(([label, value]) => (

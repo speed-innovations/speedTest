@@ -10,43 +10,47 @@
     "db:migrate": "prisma migrate deploy",
     "db:seed": "ts-node --project prisma/tsconfig.json prisma/seed.ts",
     "db:studio": "prisma studio",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "prisma": {
     "seed": "ts-node --project prisma/tsconfig.json prisma/seed.ts"
   },
   "dependencies": {
+    "@headlessui/react": "^1.7.18",
+    "@prisma/client": "^5.10.0",
+    "bcryptjs": "^2.4.3",
+    "clsx": "^2.1.0",
+    "date-fns": "^3.3.1",
+    "lucide-react": "^0.344.0",
     "next": "14.2.0",
+    "next-auth": "^4.24.5",
+    "nodemailer": "^7.0.7",
+    "prisma": "^5.10.0",
     "react": "^18",
     "react-dom": "^18",
-    "@prisma/client": "^5.10.0",
-    "prisma": "^5.10.0",
-    "next-auth": "^4.24.5",
-    "bcryptjs": "^2.4.3",
-    "nodemailer": "^7.0.7",
-    "xlsx": "^0.18.5",
-    "uuid": "^9.0.0",
-    "date-fns": "^3.3.1",
     "react-hot-toast": "^2.4.1",
-    "@headlessui/react": "^1.7.18",
-    "lucide-react": "^0.344.0",
-    "clsx": "^2.1.0"
+    "uuid": "^9.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
+    "@types/nodemailer": "^6.4.14",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "@types/bcryptjs": "^2.4.6",
-    "@types/nodemailer": "^6.4.14",
-    "tailwindcss": "^3.4.0",
     "autoprefixer": "^10.4.17",
     "postcss": "^8.4.35",
-    "ts-node": "^10.9.2"
+    "tailwindcss": "^3.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5",
+    "vitest": "^2.1.9"
   },
   "allowScripts": {
     "prisma@5.22.0": true,
     "@prisma/client@5.22.0": true,
-    "@prisma/engines@5.22.0": true
+    "@prisma/engines@5.22.0": true,
+    "esbuild@0.21.5": true
   }
 }

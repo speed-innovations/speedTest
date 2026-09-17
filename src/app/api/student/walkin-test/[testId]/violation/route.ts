@@ -1,33 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
+import {
+  requireStudent,
+  requireWalkInAttempt,
+  errorResponse,
+  assignedQuestionIds,
+} from '@/lib/attempt-auth'
+
+/** Cap stored violations so a scripted client cannot grow the row without bound. */
+const MAX_VIOLATIONS = 500
 
 export async function POST(req: NextRequest, { params }: { params: { testId: string } }) {
-  const session = await getServerSession(authOptions)
-  if (!session || (session.user as any).role !== 'STUDENT')
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  try {
+    const student = await requireStudent()
+    const body = await req.json().catch(() => ({}))
 
-  const { attemptId, violation } = await req.json()
+    const attempt = await requireWalkInAttempt(body.attemptId, params.testId, student.studentId)
+    if (attempt.isSubmitted)
+      return NextResponse.json({ error: 'Test already submitted' }, { status: 409 })
 
-  const attempt = await prisma.walkInAttempt.findUnique({ where: { id: attemptId } })
-  if (!attempt) return NextResponse.json({ error: 'Attempt not found' }, { status: 404 })
+    const incoming = body.violation
+    if (!incoming || typeof incoming !== 'object')
+      return NextResponse.json({ error: 'Missing violation' }, { status: 400 })
 
-  const existingViolations = (attempt.violations as any[]) || []
-  existingViolations.push(violation)
+    const assigned = assignedQuestionIds(attempt.questionIds)
+    const questionId =
+      typeof incoming.questionId === 'string' && assigned.includes(incoming.questionId)
+        ? incoming.questionId
+        : null
+    const type = typeof incoming.type === 'string' ? incoming.type.slice(0, 64) : 'UNKNOWN'
+    const entry = { questionId, type, timestamp: new Date().toISOString() }
 
-  await prisma.walkInAttempt.update({
-    where: { id: attemptId },
-    data: { violations: existingViolations }
-  })
+    const existing = Array.isArray(attempt.violations) ? attempt.violations : []
+    if (existing.length >= MAX_VIOLATIONS)
+      return NextResponse.json({ success: true, capped: true })
 
-  // Flag the response for the current question
-  if (violation.questionId) {
-    await prisma.walkInResponse.updateMany({
-      where: { attemptId, questionId: violation.questionId },
-      data: { flagged: true }
+    await prisma.walkInAttempt.update({
+      where: { id: attempt.id },
+      data: { violations: [...existing, entry] },
     })
-  }
 
-  return NextResponse.json({ recorded: true })
+    if (questionId) {
+      await prisma.walkInResponse.upsert({
+        where: { attemptId_questionId: { attemptId: attempt.id, questionId } },
+        create: { attemptId: attempt.id, questionId, flagged: true },
+        update: { flagged: true },
+      })
+    }
+
+    return NextResponse.json({ success: true })
+  } catch (err) {
+    return errorResponse(err, 'Walk-in violation error', 'Could not record the violation.')
+  }
 }

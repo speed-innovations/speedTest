@@ -1,88 +1,122 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
+import { gradeAttempt } from '@/lib/grading'
+import {
+  requireStudent,
+  requireWalkInAttempt,
+  errorResponse,
+  assignedQuestionIds,
+  sanitizeAnswers,
+  isPastDeadline,
+} from '@/lib/attempt-auth'
 
 export async function POST(req: NextRequest, { params }: { params: { testId: string } }) {
   try {
-    const session = await getServerSession(authOptions)
-    if (!session || (session.user as any).role !== 'STUDENT')
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const student = await requireStudent()
+    const body = await req.json().catch(() => ({}))
 
-    const body = await req.json()
-    const { attemptId, answers, violations } = body
+    const attempt = await requireWalkInAttempt(body.attemptId, params.testId, student.studentId)
 
-    if (!attemptId)
-      return NextResponse.json({ error: 'Missing attemptId' }, { status: 400 })
+    // Idempotent: a retry after a successful submit returns the stored result.
+    if (attempt.isSubmitted) {
+      return NextResponse.json({
+        success: true,
+        totalScore: attempt.totalScore,
+        areaScores: attempt.areaScores,
+      })
+    }
+    if (!attempt.startedAt)
+      return NextResponse.json({ error: 'Test has not been started' }, { status: 409 })
 
-    const attempt = await prisma.walkInAttempt.findUnique({
-      where: { id: attemptId },
-      include: { test: true }
-    })
-    if (!attempt)
-      return NextResponse.json({ error: 'Attempt not found' }, { status: 404 })
+    const assigned = assignedQuestionIds(attempt.questionIds)
 
-    // If already submitted, return success (idempotent — allows retry)
-    if (attempt.isSubmitted)
-      return NextResponse.json({ success: true, totalScore: attempt.totalScore, areaScores: attempt.areaScores })
+    // Past the deadline the client payload is discarded; grade what was saved.
+    const expired = isPastDeadline(attempt.expiresAt)
+    const incoming = expired ? {} : sanitizeAnswers(body.answers, assigned)
 
-    // Grade the test
-    const answerEntries = Object.entries(answers || {}) as [string, string][]
-    const questionIds = answerEntries.map(([qId]) => qId)
-
-    const questions = questionIds.length > 0
-      ? await prisma.question.findMany({ where: { id: { in: questionIds } } })
-      : []
-
-    let totalScore = 0
-    const areaScores: Record<string, number> = {}
-
-    const graded = questions.map(q => {
-      const selectedAnswer = answers[q.id]
-      const isCorrect = selectedAnswer === q.correctAnswer
-      const marksAwarded = isCorrect ? q.weightage : 0
-      totalScore += marksAwarded
-      areaScores[q.area] = (areaScores[q.area] || 0) + marksAwarded
-      return { questionId: q.id, selectedAnswer, isCorrect, marksAwarded }
+    const questions = await prisma.question.findMany({
+      where: { id: { in: assigned } },
+      select: { id: true, area: true, correctAnswer: true, weightage: true },
     })
 
-    // Use a transaction to ensure atomicity — batch responses in chunks to avoid pool exhaustion
-    await prisma.$transaction(async (tx) => {
-      // Process responses in batches of 10
-      for (let i = 0; i < graded.length; i += 10) {
-        const batch = graded.slice(i, i + 10)
-        await Promise.all(batch.map(g =>
+    const violations = Array.isArray(body.violations) ? body.violations : []
+
+    const result = await prisma.$transaction(async (tx) => {
+      const entries = Object.entries(incoming)
+      for (let i = 0; i < entries.length; i += 10) {
+        const batch = entries.slice(i, i + 10)
+        await Promise.all(batch.map(([questionId, answer]) =>
           tx.walkInResponse.upsert({
-            where: { attemptId_questionId: { attemptId, questionId: g.questionId } },
-            create: {
-              attemptId, questionId: g.questionId,
-              selectedAnswer: g.selectedAnswer, isCorrect: g.isCorrect,
-              marksAwarded: g.marksAwarded, answeredAt: new Date(),
-            },
-            update: { selectedAnswer: g.selectedAnswer, isCorrect: g.isCorrect, marksAwarded: g.marksAwarded }
+            where: { attemptId_questionId: { attemptId: attempt.id, questionId } },
+            create: { attemptId: attempt.id, questionId, selectedAnswer: answer, answeredAt: new Date() },
+            update: { selectedAnswer: answer, answeredAt: new Date() },
           })
         ))
       }
 
-      // Mark as submitted
-      await tx.walkInAttempt.update({
-        where: { id: attemptId },
+      // Grade from the database, not the request body.
+      const persisted = await tx.walkInResponse.findMany({
+        where: { attemptId: attempt.id },
+        select: { questionId: true, selectedAnswer: true },
+      })
+      const answers: Record<string, string> = {}
+      for (const r of persisted) {
+        if (r.selectedAnswer) answers[r.questionId] = r.selectedAnswer
+      }
+
+      const { graded, totalScore, areaScores } = gradeAttempt(questions, answers)
+
+      for (let i = 0; i < graded.length; i += 10) {
+        const batch = graded.slice(i, i + 10)
+        await Promise.all(batch.map(g =>
+          tx.walkInResponse.upsert({
+            where: { attemptId_questionId: { attemptId: attempt.id, questionId: g.questionId } },
+            create: {
+              attemptId: attempt.id, questionId: g.questionId,
+              selectedAnswer: g.selectedAnswer, isCorrect: g.isCorrect,
+              marksAwarded: g.marksAwarded, answeredAt: new Date(),
+            },
+            update: {
+              selectedAnswer: g.selectedAnswer, isCorrect: g.isCorrect,
+              marksAwarded: g.marksAwarded,
+            },
+          })
+        ))
+      }
+
+      const updated = await tx.walkInAttempt.updateMany({
+        where: { id: attempt.id, isSubmitted: false },
         data: {
           isSubmitted: true,
           submittedAt: new Date(),
           totalScore,
           areaScores,
-          violations: violations || [],
-        }
+          violations,
+        },
       })
+
+      return { totalScore, areaScores, applied: updated.count === 1 }
     }, { timeout: 30000 })
 
-    return NextResponse.json({ success: true, totalScore, areaScores })
-  } catch (err: any) {
-    console.error('Walk-in submit error:', err)
-    return NextResponse.json(
-      { error: 'Submit failed. Please try again.', detail: err.message },
-      { status: 500 }
-    )
+    if (!result.applied) {
+      const current = await prisma.walkInAttempt.findUnique({
+        where: { id: attempt.id },
+        select: { totalScore: true, areaScores: true },
+      })
+      return NextResponse.json({
+        success: true,
+        totalScore: current?.totalScore,
+        areaScores: current?.areaScores,
+      })
+    }
+
+    return NextResponse.json({
+      success: true,
+      totalScore: result.totalScore,
+      areaScores: result.areaScores,
+      expired,
+    })
+  } catch (err) {
+    return errorResponse(err, 'Walk-in submit error', 'Submit failed. Please try again.')
   }
 }

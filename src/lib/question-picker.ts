@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db'
+import { secureShuffle } from '@/lib/password'
 
 interface AreaConfig {
   area: string
@@ -8,14 +9,9 @@ interface AreaConfig {
   hardPct?: number
 }
 
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[a[i], a[j]] = [a[j], a[i]]
-  }
-  return a
-}
+// Question selection must not be predictable: Math.random()'s state is
+// recoverable, which would let a student derive another student's paper.
+const shuffle = secureShuffle
 
 function normDifficulty(d: string | null | undefined): 'EASY' | 'MEDIUM' | 'HARD' {
   const v = (d || '').toString().trim().toUpperCase()

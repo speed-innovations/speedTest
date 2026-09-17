@@ -68,8 +68,18 @@ export async function sendCredentialsEmail({
 }) {
   const transporter = getTransporter()
   if (!transporter) {
+    // Never log the password in a deployed environment — server logs are
+    // retained, searchable, and visible to anyone with dashboard access.
+    // Locally it is printed so accounts are usable without an SMTP server.
     console.log(`📧 [SKIPPED] Credentials email for ${to} — SMTP not configured`)
-    console.log(`   Email: ${email} | Password: ${password}`)
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`   [dev only] Email: ${email} | Password: ${password}`)
+    } else {
+      console.warn(
+        `   Account for ${email} was created but no credentials were delivered. ` +
+        `Configure SMTP and use "Resend credentials" to issue a new password.`
+      )
+    }
     return
   }
 

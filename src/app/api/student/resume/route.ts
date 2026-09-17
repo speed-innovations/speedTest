@@ -17,8 +17,21 @@ export async function GET(req: NextRequest) {
   if (studentId && (role === 'APP_ADMIN' || role === 'COLLEGE_COORDINATOR')) {
     const profile = await prisma.studentProfile.findUnique({
       where: { id: studentId },
-      select: { resumeUrl: true, fullName: true }
+      select: { resumeUrl: true, fullName: true, collegeId: true }
     })
+
+    // A coordinator may only read resumes from their own college. Without this
+    // check any coordinator can pull any student's resume across the platform.
+    if (role === 'COLLEGE_COORDINATOR') {
+      const coordinator = await prisma.user.findUnique({
+        where: { email: session.user!.email! },
+        select: { collegeId: true }
+      })
+      if (!coordinator?.collegeId || profile?.collegeId !== coordinator.collegeId) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      }
+    }
+
     resumeUrl = profile?.resumeUrl || null
     studentName = profile?.fullName || 'resume'
   } else {
