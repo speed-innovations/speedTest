@@ -1,22 +1,56 @@
-import nodemailer from 'nodemailer'
+// Email is sent through Resend's HTTPS API (port 443), not SMTP.
+// Render's free tier blocks outbound SMTP ports (25/465/587), so a raw
+// nodemailer/SMTP connection times out there. The HTTPS API is never
+// blocked and works identically on the Node (Render) and workerd
+// (Cloudflare) deploy targets. Called with the global fetch — no SDK.
+//
+// EMAIL_FROM must be an address on a domain verified at resend.com/domains.
+// Without a verified domain Resend only permits sending to the account
+// owner's own address, so credential mail to candidates will 403.
+const RESEND_ENDPOINT = 'https://api.resend.com/emails'
+const SEND_TIMEOUT_MS = 10_000
 
-function getTransporter() {
-  const host = process.env.EMAIL_SERVER_HOST
-  const port = parseInt(process.env.EMAIL_SERVER_PORT || '587')
-  const user = process.env.EMAIL_SERVER_USER
-  const pass = process.env.EMAIL_SERVER_PASSWORD
+function getSender(): { apiKey: string; from: string } | null {
+  const apiKey = process.env.RESEND_API_KEY
+  const from = process.env.EMAIL_FROM
 
-  if (!host || !user || !pass) {
-    console.warn('⚠️ Email not configured. Set EMAIL_SERVER_HOST, EMAIL_SERVER_USER, EMAIL_SERVER_PASSWORD in .env')
+  if (!apiKey || !from) {
+    console.warn('⚠️ Email not configured. Set RESEND_API_KEY and EMAIL_FROM in the environment')
     return null
   }
+  return { apiKey, from }
+}
 
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
-    auth: { user, pass },
-  })
+async function sendViaResend(opts: {
+  apiKey: string; from: string; to: string; subject: string; html: string
+}) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS)
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${opts.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: `SpeedTest <${opts.from}>`,
+        to: [opts.to],
+        subject: opts.subject,
+        html: opts.html,
+      }),
+      signal: controller.signal,
+    })
+
+    // Resend returns 200 with a message id on success; anything else is an
+    // error whose body explains why (bad key, unverified domain, etc.).
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      throw new Error(`Resend responded ${res.status}: ${detail || 'no body'}`)
+    }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 const brandEmail = (content: string) => `
@@ -66,25 +100,22 @@ export async function sendCredentialsEmail({
 }: {
   to: string; name: string; email: string; password: string; loginUrl: string; role: string;
 }) {
-  const transporter = getTransporter()
-  if (!transporter) {
+  const sender = getSender()
+  if (!sender) {
     // Never log the password in a deployed environment — server logs are
     // retained, searchable, and visible to anyone with dashboard access.
-    // Locally it is printed so accounts are usable without an SMTP server.
-    console.log(`📧 [SKIPPED] Credentials email for ${to} — SMTP not configured`)
+    // Locally it is printed so accounts are usable without email configured.
+    console.log(`📧 [SKIPPED] Credentials email for ${to} — email not configured`)
     if (process.env.NODE_ENV !== 'production') {
       console.log(`   [dev only] Email: ${email} | Password: ${password}`)
     } else {
       console.warn(
         `   Account for ${email} was created but no credentials were delivered. ` +
-        `Configure SMTP and use "Resend credentials" to issue a new password.`
+        `Configure SENDGRID_API_KEY and use "Resend credentials" to issue a new password.`
       )
     }
     return
   }
-
-  // Use the authenticated SMTP user as sender (Gmail requires this)
-  const from = process.env.EMAIL_FROM || process.env.EMAIL_SERVER_USER
 
   const content = `
     <h2>Welcome to SpeedTest, ${name}!</h2>
@@ -99,8 +130,9 @@ export async function sendCredentialsEmail({
     <p style="color:#888;font-size:13px;">If you did not expect this email, please contact your administrator.</p>
   `
 
-  await transporter.sendMail({
-    from: `"SpeedTest" <${from}>`,
+  await sendViaResend({
+    apiKey: sender.apiKey,
+    from: sender.from,
     to,
     subject: 'Your SpeedTest Account Credentials',
     html: brandEmail(content),
@@ -112,13 +144,11 @@ export async function sendTestScheduleEmail({
 }: {
   to: string; name: string; testTitle: string; scheduledAt: Date; duration: number; loginUrl: string;
 }) {
-  const transporter = getTransporter()
-  if (!transporter) {
-    console.log(`📧 [SKIPPED] Test schedule email for ${to} — SMTP not configured`)
+  const sender = getSender()
+  if (!sender) {
+    console.log(`📧 [SKIPPED] Test schedule email for ${to} — email not configured`)
     return
   }
-
-  const from = process.env.EMAIL_FROM || process.env.EMAIL_SERVER_USER
 
   const content = `
     <h2>Test Scheduled: ${testTitle}</h2>
@@ -133,8 +163,9 @@ export async function sendTestScheduleEmail({
     <a href="${loginUrl}" class="btn">Go to SpeedTest Portal →</a>
   `
 
-  await transporter.sendMail({
-    from: `"SpeedTest" <${from}>`,
+  await sendViaResend({
+    apiKey: sender.apiKey,
+    from: sender.from,
     to,
     subject: `Test Scheduled: ${testTitle}`,
     html: brandEmail(content),
