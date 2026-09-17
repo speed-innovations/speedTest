@@ -6,6 +6,7 @@ import {
   errorResponse,
   assignedQuestionIds,
   remainingSeconds,
+  isUniqueViolation,
 } from '@/lib/attempt-auth'
 
 /** Start (or resume) a walk-in attempt. The request body is ignored. */
@@ -35,14 +36,24 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: st
 
     if (!attempt) {
       const questionIds = await pickQuestionsByConfig(test.assessmentConfig as any[])
-      attempt = await prisma.walkInAttempt.create({
-        data: {
-          testId: params.testId,
-          studentId: student.studentId,
-          userId: student.userId,
-          questionIds,
-        },
-      })
+      try {
+        attempt = await prisma.walkInAttempt.create({
+          data: {
+            testId: params.testId,
+            studentId: student.studentId,
+            userId: student.userId,
+            questionIds,
+          },
+        })
+      } catch (err) {
+        // A double-clicked Start lands here; the unique index picks a winner.
+        if (!isUniqueViolation(err)) throw err
+        // Inside a transaction so an edge read cache cannot serve the stale
+        // "no row" that this SELECT just contradicted.
+        attempt = await prisma.$transaction(tx => tx.walkInAttempt.findUniqueOrThrow({
+          where: { testId_studentId: { testId: params.testId, studentId: student.studentId } },
+        }))
+      }
     }
 
     // Start the clock once. Resuming must not extend the deadline.

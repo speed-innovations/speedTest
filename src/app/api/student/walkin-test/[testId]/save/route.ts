@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { upsertResponses } from '@/lib/responses'
 import {
   requireStudent,
   requireWalkInAttempt,
@@ -31,16 +32,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: st
     const entries = Object.entries(answers)
     if (entries.length === 0) return NextResponse.json({ saved: true, count: 0 })
 
-    for (let i = 0; i < entries.length; i += 5) {
-      const batch = entries.slice(i, i + 5)
-      await Promise.all(batch.map(([questionId, answer]) =>
-        prisma.walkInResponse.upsert({
-          where: { attemptId_questionId: { attemptId: attempt.id, questionId } },
-          create: { attemptId: attempt.id, questionId, selectedAnswer: answer, answeredAt: new Date() },
-          update: { selectedAnswer: answer, answeredAt: new Date() },
-        })
-      ))
-    }
+    // Single statement — see the scheduled-test save route for the rationale.
+    await upsertResponses(
+      prisma,
+      'WalkInResponse',
+      attempt.id,
+      entries.map(([questionId, selectedAnswer]) => ({ questionId, selectedAnswer }))
+    )
 
     return NextResponse.json({ saved: true, count: entries.length })
   } catch (err) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { gradeAttempt } from '@/lib/grading'
+import { upsertResponses } from '@/lib/responses'
 import {
   requireStudent,
   requireScheduledAttempt,
@@ -41,21 +42,28 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ scheduleId
       select: { id: true, area: true, correctAnswer: true, weightage: true },
     })
 
-    const violations = Array.isArray(body.violations) ? body.violations : []
+    // Violations recorded through the violation endpoint are authoritative. The
+    // client copy only seeds an attempt that has none, so a submit cannot erase
+    // what the server already saw.
+    const serverViolations = Array.isArray(attempt.violations) ? attempt.violations : []
+    const clientViolations = Array.isArray(body.violations) ? body.violations.slice(0, 500) : []
+    const violationsPatch =
+      serverViolations.length === 0 && clientViolations.length > 0
+        ? { violations: clientViolations }
+        : {}
 
+    // Four round trips, whatever the paper length. This used to be one upsert
+    // per question inside the transaction, so a 60 question paper held a
+    // connection open across ~130 sequential round trips - with a cohort
+    // finishing in the same minute that is what exhausted the pool.
     const result = await prisma.$transaction(async (tx) => {
       // Persist whatever the client sent that survived sanitizing.
-      const entries = Object.entries(incoming)
-      for (let i = 0; i < entries.length; i += 10) {
-        const batch = entries.slice(i, i + 10)
-        await Promise.all(batch.map(([questionId, answer]) =>
-          tx.candidateResponse.upsert({
-            where: { attemptId_questionId: { attemptId: attempt.id, questionId } },
-            create: { attemptId: attempt.id, questionId, selectedAnswer: answer, answeredAt: new Date() },
-            update: { selectedAnswer: answer, answeredAt: new Date() },
-          })
-        ))
-      }
+      await upsertResponses(
+        tx,
+        'CandidateResponse',
+        attempt.id,
+        Object.entries(incoming).map(([questionId, selectedAnswer]) => ({ questionId, selectedAnswer }))
+      )
 
       // Grade from the database, not the request. This is the single source of
       // truth and covers answers saved earlier but missing from this payload.
@@ -70,23 +78,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ scheduleId
 
       const { graded, totalScore, areaScores } = gradeAttempt(questions, answers)
 
-      for (let i = 0; i < graded.length; i += 10) {
-        const batch = graded.slice(i, i + 10)
-        await Promise.all(batch.map(g =>
-          tx.candidateResponse.upsert({
-            where: { attemptId_questionId: { attemptId: attempt.id, questionId: g.questionId } },
-            create: {
-              attemptId: attempt.id, questionId: g.questionId,
-              selectedAnswer: g.selectedAnswer, isCorrect: g.isCorrect,
-              marksAwarded: g.marksAwarded, answeredAt: new Date(),
-            },
-            update: {
-              selectedAnswer: g.selectedAnswer, isCorrect: g.isCorrect,
-              marksAwarded: g.marksAwarded,
-            },
-          })
-        ))
-      }
+      await upsertResponses(tx, 'CandidateResponse', attempt.id, graded)
 
       // Guard against a concurrent submit landing first.
       const updated = await tx.testAttempt.updateMany({
@@ -96,12 +88,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ scheduleId
           submittedAt: new Date(),
           totalScore,
           areaScores,
-          violations,
+          ...violationsPatch,
         },
       })
 
       return { totalScore, areaScores, applied: updated.count === 1 }
-    }, { timeout: 30000 })
+    }, { timeout: 20_000, maxWait: 10_000 })
 
     if (!result.applied) {
       const current = await prisma.testAttempt.findUnique({

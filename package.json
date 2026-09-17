@@ -20,6 +20,7 @@
     "seed": "ts-node --project prisma/tsconfig.json prisma/seed.ts"
   },
   "dependencies": {
+    "@app/prisma-client": "file:vendor/prisma-client",
     "@headlessui/react": "^1.7.18",
     "@prisma/adapter-pg": "5.22.0",
     "@prisma/client": "^5.10.0",

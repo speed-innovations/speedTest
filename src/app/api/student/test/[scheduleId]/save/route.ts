@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { upsertResponses } from '@/lib/responses'
 import {
   requireStudent,
   requireScheduledAttempt,
@@ -32,16 +33,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ scheduleId
     const entries = Object.entries(answers)
     if (entries.length === 0) return NextResponse.json({ saved: true, count: 0 })
 
-    for (let i = 0; i < entries.length; i += 5) {
-      const batch = entries.slice(i, i + 5)
-      await Promise.all(batch.map(([questionId, answer]) =>
-        prisma.candidateResponse.upsert({
-          where: { attemptId_questionId: { attemptId: attempt.id, questionId } },
-          create: { attemptId: attempt.id, questionId, selectedAnswer: answer, answeredAt: new Date() },
-          update: { selectedAnswer: answer, answeredAt: new Date() },
-        })
-      ))
-    }
+    // One statement for the whole batch. The per-row upsert this replaced cost a
+    // round trip per answer; with a full cohort autosaving at once those round
+    // trips were what queued up behind the connection pool.
+    await upsertResponses(
+      prisma,
+      'CandidateResponse',
+      attempt.id,
+      entries.map(([questionId, selectedAnswer]) => ({ questionId, selectedAnswer }))
+    )
 
     return NextResponse.json({ saved: true, count: entries.length })
   } catch (err) {

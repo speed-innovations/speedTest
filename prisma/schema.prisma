@@ -60,6 +60,8 @@ model User {
   studentProfile StudentProfile?
   testAttempts  TestAttempt[]
   walkInAttempts WalkInAttempt[]
+
+  @@index([collegeId])
 }
 
 model College {
@@ -118,6 +120,9 @@ model StudentProfile {
   testAttempts    TestAttempt[]
   walkInAttempts  WalkInAttempt[]
   walkInEligible  WalkInEligibleStudent[]
+
+  @@index([collegeId])
+  @@index([status])
 }
 
 model JobOpening {
@@ -175,6 +180,9 @@ model TestSchedule {
   createdAt       DateTime  @default(now())
 
   attempts        TestAttempt[]
+
+  @@index([collegeId, scheduledAt])
+  @@index([testId])
 }
 
 model Question {
@@ -196,6 +204,9 @@ model Question {
   testQuestions   TestQuestion[]
   responses       CandidateResponse[]
   walkInResponses WalkInResponse[]
+
+  @@index([area, isActive])
+  @@index([isActive])
 }
 
 model TestQuestion {
@@ -240,6 +251,8 @@ model TestAttempt {
   responses       CandidateResponse[]
 
   @@unique([scheduleId, studentId])
+  @@index([studentId])
+  @@index([userId])
 }
 
 model CandidateResponse {
@@ -255,6 +268,7 @@ model CandidateResponse {
   flagged         Boolean   @default(false) // Tab change during this question
 
   @@unique([attemptId, questionId])
+  @@index([questionId])
 }
 
 model ShortlistCriteria {
@@ -294,6 +308,8 @@ model WalkInAttempt {
   responses       WalkInResponse[]
 
   @@unique([testId, studentId])
+  @@index([studentId])
+  @@index([userId])
 }
 
 model WalkInTestCollege {
@@ -333,4 +349,5 @@ model WalkInResponse {
   flagged         Boolean   @default(false)
 
   @@unique([attemptId, questionId])
+  @@index([questionId])
 }

@@ -1,7 +1,11 @@
 # Local Cloudflare Workers runtime secrets (`npm run preview`).
 # Copy to .dev.vars and fill in. Same variable names as .env — nothing new.
-DATABASE_URL="postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true"
-DIRECT_URL="postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+# Note: on Workers the app connects through the HYPERDRIVE binding, not
+# DATABASE_URL. For a local preview, export the Hyperdrive local connection
+# string as well (see .env.example):
+#   export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="$DATABASE_URL"
+DATABASE_URL="postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true&sslmode=no-verify"
+DIRECT_URL="postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require"
 NEXTAUTH_SECRET=""
 NEXTAUTH_URL="http://localhost:8787"
 EMAIL_SERVER_HOST=""

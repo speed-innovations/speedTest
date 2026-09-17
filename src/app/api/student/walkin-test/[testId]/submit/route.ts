@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { gradeAttempt } from '@/lib/grading'
+import { upsertResponses } from '@/lib/responses'
 import {
   requireStudent,
   requireWalkInAttempt,
@@ -40,20 +41,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: st
       select: { id: true, area: true, correctAnswer: true, weightage: true },
     })
 
-    const violations = Array.isArray(body.violations) ? body.violations : []
+    // Server-recorded violations win; the client copy only seeds an empty set.
+    const serverViolations = Array.isArray(attempt.violations) ? attempt.violations : []
+    const clientViolations = Array.isArray(body.violations) ? body.violations.slice(0, 500) : []
+    const violationsPatch =
+      serverViolations.length === 0 && clientViolations.length > 0
+        ? { violations: clientViolations }
+        : {}
 
+    // Bulk writes keep this to four round trips regardless of paper length.
     const result = await prisma.$transaction(async (tx) => {
-      const entries = Object.entries(incoming)
-      for (let i = 0; i < entries.length; i += 10) {
-        const batch = entries.slice(i, i + 10)
-        await Promise.all(batch.map(([questionId, answer]) =>
-          tx.walkInResponse.upsert({
-            where: { attemptId_questionId: { attemptId: attempt.id, questionId } },
-            create: { attemptId: attempt.id, questionId, selectedAnswer: answer, answeredAt: new Date() },
-            update: { selectedAnswer: answer, answeredAt: new Date() },
-          })
-        ))
-      }
+      await upsertResponses(
+        tx,
+        'WalkInResponse',
+        attempt.id,
+        Object.entries(incoming).map(([questionId, selectedAnswer]) => ({ questionId, selectedAnswer }))
+      )
 
       // Grade from the database, not the request body.
       const persisted = await tx.walkInResponse.findMany({
@@ -67,23 +70,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: st
 
       const { graded, totalScore, areaScores } = gradeAttempt(questions, answers)
 
-      for (let i = 0; i < graded.length; i += 10) {
-        const batch = graded.slice(i, i + 10)
-        await Promise.all(batch.map(g =>
-          tx.walkInResponse.upsert({
-            where: { attemptId_questionId: { attemptId: attempt.id, questionId: g.questionId } },
-            create: {
-              attemptId: attempt.id, questionId: g.questionId,
-              selectedAnswer: g.selectedAnswer, isCorrect: g.isCorrect,
-              marksAwarded: g.marksAwarded, answeredAt: new Date(),
-            },
-            update: {
-              selectedAnswer: g.selectedAnswer, isCorrect: g.isCorrect,
-              marksAwarded: g.marksAwarded,
-            },
-          })
-        ))
-      }
+      await upsertResponses(tx, 'WalkInResponse', attempt.id, graded)
 
       const updated = await tx.walkInAttempt.updateMany({
         where: { id: attempt.id, isSubmitted: false },
@@ -92,12 +79,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: st
           submittedAt: new Date(),
           totalScore,
           areaScores,
-          violations,
+          ...violationsPatch,
         },
       })
 
       return { totalScore, areaScores, applied: updated.count === 1 }
-    }, { timeout: 30000 })
+    }, { timeout: 20_000, maxWait: 10_000 })
 
     if (!result.applied) {
       const current = await prisma.walkInAttempt.findUnique({

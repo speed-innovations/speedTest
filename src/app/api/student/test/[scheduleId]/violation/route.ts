@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { appendViolation, flagResponse } from '@/lib/responses'
 import {
   requireStudent,
   requireScheduledAttempt,
   errorResponse,
   assignedQuestionIds,
 } from '@/lib/attempt-auth'
-
-/** Cap stored violations so a scripted client cannot grow the row without bound. */
-const MAX_VIOLATIONS = 500
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ scheduleId: string }> }) {
   const params = await ctx.params
@@ -33,21 +31,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ scheduleId
     const type = typeof incoming.type === 'string' ? incoming.type.slice(0, 64) : 'UNKNOWN'
     const entry = { questionId, type, timestamp: new Date().toISOString() }
 
-    const existing = Array.isArray(attempt.violations) ? attempt.violations : []
-    if (existing.length >= MAX_VIOLATIONS)
-      return NextResponse.json({ success: true, capped: true })
-
-    await prisma.testAttempt.update({
-      where: { id: attempt.id },
-      data: { violations: [...existing, entry] },
-    })
+    // Appended in the database rather than read-modify-written here: one alt-tab
+    // fires both `visibilitychange` and `blur`, so two requests used to read the
+    // same array and the second overwrote the first. The cap is applied in the
+    // same statement.
+    const stored = await appendViolation(prisma, 'TestAttempt', attempt.id, entry)
+    if (!stored) return NextResponse.json({ success: true, capped: true })
 
     if (questionId) {
-      await prisma.candidateResponse.upsert({
-        where: { attemptId_questionId: { attemptId: attempt.id, questionId } },
-        create: { attemptId: attempt.id, questionId, flagged: true },
-        update: { flagged: true },
-      })
+      await flagResponse(prisma, 'CandidateResponse', attempt.id, questionId)
     }
 
     return NextResponse.json({ success: true })

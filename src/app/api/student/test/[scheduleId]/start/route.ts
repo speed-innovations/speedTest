@@ -6,6 +6,7 @@ import {
   errorResponse,
   assignedQuestionIds,
   remainingSeconds,
+  isUniqueViolation,
 } from '@/lib/attempt-auth'
 
 /**
@@ -44,14 +45,27 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ scheduleId
 
     if (!attempt) {
       const questionIds = await pickQuestionsByConfig(schedule.test.assessmentConfig as any[])
-      attempt = await prisma.testAttempt.create({
-        data: {
-          scheduleId: params.scheduleId,
-          studentId: student.studentId,
-          userId: student.userId,
-          questionIds,
-        },
-      })
+      try {
+        attempt = await prisma.testAttempt.create({
+          data: {
+            scheduleId: params.scheduleId,
+            studentId: student.studentId,
+            userId: student.userId,
+            questionIds,
+          },
+        })
+      } catch (err) {
+        // A double-clicked Start, or the load route racing this one, lands here.
+        // The unique index on (scheduleId, studentId) picks a winner.
+        if (!isUniqueViolation(err)) throw err
+        // Inside a transaction so an edge read cache cannot serve the stale
+        // "no row" that this SELECT just contradicted.
+        attempt = await prisma.$transaction(tx => tx.testAttempt.findUniqueOrThrow({
+          where: {
+            scheduleId_studentId: { scheduleId: params.scheduleId, studentId: student.studentId },
+          },
+        }))
+      }
     }
 
     // Start the clock once, on first start. Resuming must not extend the deadline.

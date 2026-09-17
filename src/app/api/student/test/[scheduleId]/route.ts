@@ -6,6 +6,7 @@ import {
   errorResponse,
   assignedQuestionIds,
   remainingSeconds,
+  isUniqueViolation,
 } from '@/lib/attempt-auth'
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ scheduleId: string }> }) {
@@ -43,15 +44,30 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ scheduleId:
     // the student can influence it, and never accepted from the request body.
     if (!attempt) {
       const questionIds = await pickQuestionsByConfig(schedule.test.assessmentConfig as any[])
-      attempt = await prisma.testAttempt.create({
-        data: {
-          scheduleId: params.scheduleId,
-          studentId: student.studentId,
-          userId: student.userId,
-          questionIds,
-        },
-        include: { responses: { select: { questionId: true, selectedAnswer: true } } },
-      })
+      const where = {
+        scheduleId_studentId: { scheduleId: params.scheduleId, studentId: student.studentId },
+      }
+      const include = { responses: { select: { questionId: true, selectedAnswer: true } } }
+      try {
+        attempt = await prisma.testAttempt.create({
+          data: {
+            scheduleId: params.scheduleId,
+            studentId: student.studentId,
+            userId: student.userId,
+            questionIds,
+          },
+          include,
+        })
+      } catch (err) {
+        // This route and /start both create the attempt lazily, so a page load
+        // racing the Start click can arrive twice. The unique index settles it;
+        // the loser reads the winner's row instead of failing.
+        if (!isUniqueViolation(err)) throw err
+        // Read the winner inside a transaction: Hyperdrive does not cache
+        // reads made in one, so this cannot come back as a stale "no row"
+        // from the same SELECT that just lost the race.
+        attempt = await prisma.$transaction(tx => tx.testAttempt.findUniqueOrThrow({ where, include }))
+      }
     }
 
     const assigned = assignedQuestionIds(attempt.questionIds)

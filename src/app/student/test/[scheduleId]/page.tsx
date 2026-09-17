@@ -88,7 +88,16 @@ export default function TestPage() {
     }
   }, [testStarted, submitted, currentIdx])
 
+  // A single alt-tab fires both `visibilitychange` and `blur`, so the raw
+  // handlers reported the same event twice - two writes and two toasts per
+  // switch. Collapse anything inside this window into one report.
+  const VIOLATION_THROTTLE_MS = 3000
+  const lastViolationRef = useRef(0)
+
   function recordViolation(type: string) {
+    const now = Date.now()
+    if (now - lastViolationRef.current < VIOLATION_THROTTLE_MS) return
+    lastViolationRef.current = now
     const currentQuestion = questions[currentIdx]
     if (!currentQuestion) return
     const v: Violation = {
@@ -215,6 +224,10 @@ export default function TestPage() {
 
   async function handleAutoSubmit() {
     if (!attemptId || submitted) return
+    // Everyone who started together reaches zero in the same second. A short
+    // random delay spreads that thundering herd across the submit endpoint;
+    // the server grades on its own deadline, so the wait costs no marks.
+    await new Promise(r => setTimeout(r, Math.floor(Math.random() * 4000)))
     setSubmitting(true)
     try {
       const ok = await submitWithRetry()

@@ -155,3 +155,19 @@ export function assignedQuestionIds(questionIds: unknown): string[] {
   if (!Array.isArray(questionIds)) return []
   return questionIds.filter((id): id is string => typeof id === 'string')
 }
+
+/**
+ * True for a Prisma unique-constraint failure.
+ *
+ * Attempt rows are created lazily by both the load and the start route, so two
+ * requests from the same student can race (the page fetches while the student
+ * clicks Start). The unique index on (scheduleId, studentId) settles it; the
+ * loser has to re-read rather than 500.
+ */
+export function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { code?: unknown }).code === 'P2002'
+  )
+}

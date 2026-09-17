@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
+import { appendViolation, flagResponse } from '@/lib/responses'
 import {
   requireStudent,
   requireWalkInAttempt,
   errorResponse,
   assignedQuestionIds,
 } from '@/lib/attempt-auth'
-
-/** Cap stored violations so a scripted client cannot grow the row without bound. */
-const MAX_VIOLATIONS = 500
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: string }> }) {
   const params = await ctx.params
@@ -32,21 +30,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: st
     const type = typeof incoming.type === 'string' ? incoming.type.slice(0, 64) : 'UNKNOWN'
     const entry = { questionId, type, timestamp: new Date().toISOString() }
 
-    const existing = Array.isArray(attempt.violations) ? attempt.violations : []
-    if (existing.length >= MAX_VIOLATIONS)
-      return NextResponse.json({ success: true, capped: true })
-
-    await prisma.walkInAttempt.update({
-      where: { id: attempt.id },
-      data: { violations: [...existing, entry] },
-    })
+    // Atomic append - see the scheduled-test violation route for the rationale.
+    const stored = await appendViolation(prisma, 'WalkInAttempt', attempt.id, entry)
+    if (!stored) return NextResponse.json({ success: true, capped: true })
 
     if (questionId) {
-      await prisma.walkInResponse.upsert({
-        where: { attemptId_questionId: { attemptId: attempt.id, questionId } },
-        create: { attemptId: attempt.id, questionId, flagged: true },
-        update: { flagged: true },
-      })
+      await flagResponse(prisma, 'WalkInResponse', attempt.id, questionId)
     }
 
     return NextResponse.json({ success: true })
