@@ -1,52 +1,53 @@
-// Email is sent through Resend's HTTPS API (port 443), not SMTP.
+// Email is sent through Brevo's HTTPS API (port 443), not SMTP.
 // Render's free tier blocks outbound SMTP ports (25/465/587), so a raw
 // nodemailer/SMTP connection times out there. The HTTPS API is never
 // blocked and works identically on the Node (Render) and workerd
 // (Cloudflare) deploy targets. Called with the global fetch — no SDK.
 //
-// EMAIL_FROM must be an address on a domain verified at resend.com/domains.
-// Without a verified domain Resend only permits sending to the account
-// owner's own address, so credential mail to candidates will 403.
-const RESEND_ENDPOINT = 'https://api.resend.com/emails'
+// EMAIL_FROM must be a sender verified in Brevo (Senders & IP > Senders).
+// Single-sender verification (click a link) is enough to send to any
+// recipient — no domain/DNS required.
+const BREVO_ENDPOINT = 'https://api.brevo.com/v3/smtp/email'
 const SEND_TIMEOUT_MS = 10_000
 
 function getSender(): { apiKey: string; from: string } | null {
-  const apiKey = process.env.RESEND_API_KEY
+  const apiKey = process.env.BREVO_API_KEY
   const from = process.env.EMAIL_FROM
 
   if (!apiKey || !from) {
-    console.warn('⚠️ Email not configured. Set RESEND_API_KEY and EMAIL_FROM in the environment')
+    console.warn('⚠️ Email not configured. Set BREVO_API_KEY and EMAIL_FROM in the environment')
     return null
   }
   return { apiKey, from }
 }
 
-async function sendViaResend(opts: {
+async function sendViaBrevo(opts: {
   apiKey: string; from: string; to: string; subject: string; html: string
 }) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS)
   try {
-    const res = await fetch(RESEND_ENDPOINT, {
+    const res = await fetch(BREVO_ENDPOINT, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${opts.apiKey}`,
+        'api-key': opts.apiKey,
         'Content-Type': 'application/json',
+        Accept: 'application/json',
       },
       body: JSON.stringify({
-        from: `SpeedTest <${opts.from}>`,
-        to: [opts.to],
+        sender: { name: 'SpeedTest', email: opts.from },
+        to: [{ email: opts.to }],
         subject: opts.subject,
-        html: opts.html,
+        htmlContent: opts.html,
       }),
       signal: controller.signal,
     })
 
-    // Resend returns 200 with a message id on success; anything else is an
-    // error whose body explains why (bad key, unverified domain, etc.).
+    // Brevo returns 201 Created with a messageId on success; anything else
+    // is an error whose body explains why (bad key, unverified sender, etc.).
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
-      throw new Error(`Resend responded ${res.status}: ${detail || 'no body'}`)
+      throw new Error(`Brevo responded ${res.status}: ${detail || 'no body'}`)
     }
   } finally {
     clearTimeout(timer)
@@ -130,7 +131,7 @@ export async function sendCredentialsEmail({
     <p style="color:#888;font-size:13px;">If you did not expect this email, please contact your administrator.</p>
   `
 
-  await sendViaResend({
+  await sendViaBrevo({
     apiKey: sender.apiKey,
     from: sender.from,
     to,
@@ -163,7 +164,7 @@ export async function sendTestScheduleEmail({
     <a href="${loginUrl}" class="btn">Go to SpeedTest Portal →</a>
   `
 
-  await sendViaResend({
+  await sendViaBrevo({
     apiKey: sender.apiKey,
     from: sender.from,
     to,
