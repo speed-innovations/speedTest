@@ -8,12 +8,12 @@
     "start": "next start",
     "lint": "next lint",
     "db:migrate": "prisma migrate deploy",
-    "db:seed": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts",
+    "db:seed": "ts-node --project prisma/tsconfig.json prisma/seed.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
   },
   "prisma": {
-    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+    "seed": "ts-node --project prisma/tsconfig.json prisma/seed.ts"
   },
   "dependencies": {
     "next": "14.2.0",
@@ -43,5 +43,10 @@
     "autoprefixer": "^10.4.17",
     "postcss": "^8.4.35",
     "ts-node": "^10.9.2"
+  },
+  "allowScripts": {
+    "prisma@5.22.0": true,
+    "@prisma/client@5.22.0": true,
+    "@prisma/engines@5.22.0": true
   }
 }
