@@ -14,7 +14,8 @@ import {
  * The request body is ignored entirely. Earlier this route accepted
  * `questionIds` from the client, which let a student choose their own paper.
  */
-export async function POST(req: NextRequest, { params }: { params: { scheduleId: string } }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ scheduleId: string }> }) {
+  const params = await ctx.params
   try {
     const student = await requireStudent()
 

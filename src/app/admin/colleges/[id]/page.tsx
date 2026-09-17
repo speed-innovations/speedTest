@@ -4,7 +4,8 @@ import Link from 'next/link'
 import { ArrowLeft, Building2, Users, Mail, Phone, MapPin, Pencil } from 'lucide-react'
 import StudentTable from '@/components/admin/StudentTable'
 
-export default async function CollegeDetailPage({ params }: { params: { id: string } }) {
+export default async function CollegeDetailPage(ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params
   const college = await prisma.college.findUnique({
     where: { id: params.id },
     include: {

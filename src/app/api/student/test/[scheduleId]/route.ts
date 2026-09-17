@@ -8,7 +8,8 @@ import {
   remainingSeconds,
 } from '@/lib/attempt-auth'
 
-export async function GET(req: NextRequest, { params }: { params: { scheduleId: string } }) {
+export async function GET(req: NextRequest, ctx: { params: Promise<{ scheduleId: string }> }) {
+  const params = await ctx.params
   try {
     const student = await requireStudent()
 

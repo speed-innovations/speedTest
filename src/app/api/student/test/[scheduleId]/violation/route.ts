@@ -10,7 +10,8 @@ import {
 /** Cap stored violations so a scripted client cannot grow the row without bound. */
 const MAX_VIOLATIONS = 500
 
-export async function POST(req: NextRequest, { params }: { params: { scheduleId: string } }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ scheduleId: string }> }) {
+  const params = await ctx.params
   try {
     const student = await requireStudent()
     const body = await req.json().catch(() => ({}))

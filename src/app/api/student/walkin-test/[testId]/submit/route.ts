@@ -10,7 +10,8 @@ import {
   isPastDeadline,
 } from '@/lib/attempt-auth'
 
-export async function POST(req: NextRequest, { params }: { params: { testId: string } }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: string }> }) {
+  const params = await ctx.params
   try {
     const student = await requireStudent()
     const body = await req.json().catch(() => ({}))

@@ -8,7 +8,8 @@ import { prisma } from '@/lib/db'
  * so the student gets a fresh question set on next load.
  * Works for both scheduled and walk-in tests.
  */
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const params = await ctx.params
   const session = await getServerSession(authOptions)
   if (!session || (session.user as any).role !== 'APP_ADMIN')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
