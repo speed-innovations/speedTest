@@ -27,6 +27,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: 'Not authorized' }, { status: 403 })
 
   const hashed = await bcrypt.hash(body.password, 12)
-  await prisma.user.update({ where: { id: params.id }, data: { password: hashed } })
+  await prisma.user.update({
+    where: { id: params.id },
+    data: { password: hashed, mustResetPassword: true },
+  })
   return NextResponse.json({ success: true })
 }

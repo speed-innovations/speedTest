@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { signOut } from 'next-auth/react'
 import toast from 'react-hot-toast'
 import { Save, KeyRound, Building2 } from 'lucide-react'
 
@@ -13,20 +14,22 @@ export default function AdminSettingsPage() {
       toast.error('New passwords do not match')
       return
     }
-    if (passwords.newPass.length < 6) {
-      toast.error('Password must be at least 6 characters')
+    if (passwords.newPass.length < 8) {
+      toast.error('Password must be at least 8 characters')
       return
     }
     setSaving(true)
     try {
-      const res = await fetch('/api/admin/settings/change-password', {
+      const res = await fetch('/api/auth/change-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentPassword: passwords.current, newPassword: passwords.newPass })
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Failed')
-      toast.success('Password changed successfully!')
+      toast.success('Password changed. Please sign in again.')
       setPasswords({ current: '', newPass: '', confirm: '' })
+      // A password change must not leave the previous session usable.
+      setTimeout(() => signOut({ callbackUrl: '/login' }), 1200)
     } catch (err: any) {
       toast.error(err.message)
     } finally {
@@ -58,7 +61,7 @@ export default function AdminSettingsPage() {
             <label className="label">New Password</label>
             <input className="input" type="password" value={passwords.newPass}
               onChange={e => setPasswords(p => ({ ...p, newPass: e.target.value }))}
-              required placeholder="Min 6 characters" />
+              required placeholder="Min 8 characters" />
           </div>
           <div>
             <label className="label">Confirm New Password</label>

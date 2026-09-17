@@ -22,6 +22,37 @@ export function generatePassword(length = 12): string {
   return out
 }
 
+export const MIN_PASSWORD_LENGTH = 8
+
+/**
+ * Policy for user-chosen passwords. Returns an error message, or null if valid.
+ *
+ * Deliberately modest: a length floor plus a check that the password actually
+ * changed. Composition rules (one digit, one symbol) push people towards
+ * "Password1!" without adding real entropy.
+ */
+export function validateNewPassword(
+  newPassword: unknown,
+  currentPassword?: unknown
+): string | null {
+  if (typeof newPassword !== 'string' || newPassword.length === 0) {
+    return 'New password is required'
+  }
+  if (newPassword.length < MIN_PASSWORD_LENGTH) {
+    return `Password must be at least ${MIN_PASSWORD_LENGTH} characters`
+  }
+  if (newPassword.length > 200) {
+    return 'Password must be at most 200 characters'
+  }
+  if (newPassword.trim().length === 0) {
+    return 'Password cannot be only whitespace'
+  }
+  if (typeof currentPassword === 'string' && currentPassword === newPassword) {
+    return 'New password must be different from the current password'
+  }
+  return null
+}
+
 /** Fisher-Yates shuffle backed by the CSPRNG. */
 export function secureShuffle<T>(input: readonly T[]): T[] {
   const a = [...input]
