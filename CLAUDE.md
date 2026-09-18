@@ -44,6 +44,25 @@ would report a failed deploy as a green run.
 Requires the `RENDER_API_KEY` repository secret. `RENDER_SERVICE_ID` may be set
 as a repository variable, else it defaults to the service above.
 
+### Migrations are not applied by the deploy
+
+Render's build command is `prisma generate && next build`. It never runs
+`prisma migrate deploy`, and neither does the workflow — CI only migrates its
+own throwaway database. **A schema change must be applied to Supabase by hand,
+before the code that depends on it is pushed.** Production sat three migrations
+behind the repo until this was noticed.
+
+Apply it with the Supabase URLs in the environment (dotenv does not override
+variables already set, so these win over `.env`):
+
+```bash
+DATABASE_URL="<supabase pooled>" DIRECT_URL="<supabase session>" \
+  DATABASE_CA_CERT_B64="<ca>" npx prisma migrate deploy
+```
+
+Check first with `prisma migrate status`, and confirm afterwards that the
+change is really there rather than trusting the command's output.
+
 ### Every deployment must
 
 1. Push to `main` and let the workflow deploy. Do not hand-trigger Render
@@ -88,8 +107,9 @@ error.
 Scripts use `DIRECT_URL ?? DATABASE_URL` because interactive `$transaction` is
 unreliable over the pgBouncer transaction pooler.
 
-Local and production both hold the same 192 questions: SQL 60, AI 50, Python
-50, JavaScript 22, Aptitude 10.
+Local and production both hold the same 212 questions: SQL 60, AI 50, Python
+50, JavaScript 22, Aptitude 10, and 5 each in APIs, Cloud, GenAI and
+Deployment.
 
 ### Local development
 
@@ -138,6 +158,28 @@ assessment area.
 | `shuffle-options.ts --area X,Y` | Redistribute which letter holds the correct answer |
 | `restore-options.ts --sheet AREA=path` | Rebuild options and keys from source sheets and seed scripts |
 | `seed-sql.ts`, `seed-aptitude.ts` | The only record of those 70 questions — without them those rows cannot be restored |
+
+### Adding an assessment area
+
+`src/lib/areas.ts` is the single definition of the areas and their labels —
+every dropdown, table, filter, and the import/export routes read from it. The
+list used to be copy-pasted across nine files, and the results export
+hard-coded one column per area, so a new area's scores were silently missing
+from every exported report.
+
+To add one:
+
+1. Add the value to `AssessmentArea` in `prisma/schema.prisma`.
+2. `npx prisma migrate dev --name <name> --create-only`, then apply it locally
+   and **to production by hand** (see Migrations above). Adding enum values is
+   additive and safe on a populated database.
+3. Add the value and its label to `src/lib/areas.ts`. Nothing else needs
+   editing; add a short label to `AREA_LABELS_SHORT` if the full one would wrap
+   in a dense table.
+4. `npx prisma generate` — stop the dev server first on Windows.
+
+Existing tests keep their `assessmentConfig` as-is; a new area only appears in
+a test once it is added to that test's configuration.
 
 ### Answer keys
 
