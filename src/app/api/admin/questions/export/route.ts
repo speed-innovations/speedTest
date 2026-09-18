@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import * as XLSX from 'xlsx'
+import { AREAS } from '@/lib/areas'
 
 export async function GET() {
   const session = await getServerSession(authOptions)
@@ -44,7 +45,7 @@ export async function GET() {
 
   // Add instruction sheet
   const instrRows = [
-    { Field: 'Area', Values: 'APTITUDE, DOTNET, COMMUNICATION, AI, PYTHON, JAVA, JAVASCRIPT, SQL' },
+    { Field: 'Area', Values: AREAS.join(', ') },
     { Field: 'Correct Answer', Values: 'A, B, C, or D' },
     { Field: 'Difficulty', Values: 'EASY, MEDIUM, or HARD' },
     { Field: 'Marks', Values: 'Numeric value e.g. 1, 2, 0.5' },

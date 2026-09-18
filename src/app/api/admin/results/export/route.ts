@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import * as XLSX from 'xlsx'
+import { AREAS, AREA_LABELS } from '@/lib/areas'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -58,14 +59,10 @@ export async function GET(req: NextRequest) {
       'PG Marks (%)': s?.pgMarks || '',
       'Test': testTitle,
       'Mode': mode,
-      'Aptitude Score': areas.APTITUDE || '',
-      '.NET Score': areas.DOTNET || '',
-      'Python Score': areas.PYTHON || '',
-      'AI Score': areas.AI || '',
-      'Communication Score': areas.COMMUNICATION || '',
-      'Java Score': areas.JAVA || '',
-      'JavaScript Score': areas.JAVASCRIPT || '',
-      'SQL Score': areas.SQL || '',
+      // Built from the shared area list rather than one hard-coded column per
+      // area, so adding an assessment area does not silently drop its score
+      // from every exported report.
+      ...Object.fromEntries(AREAS.map(a => [`${AREA_LABELS[a]} Score`, areas[a] || ''])),
       'Total Score': a.totalScore || '',
       'Max Marks': totalMarks,
       'Tab Switches': tabSwitchCount,

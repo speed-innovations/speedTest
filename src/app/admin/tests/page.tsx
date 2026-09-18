@@ -4,11 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { Plus, Clock, CheckSquare, Pencil, Trash2, Zap, Users, Search } from 'lucide-react'
-
-const AREA_LABELS: Record<string, string> = {
-  APTITUDE: 'Aptitude', DOTNET: '.NET', COMMUNICATION: 'Communication',
-  AI: 'AI', PYTHON: 'Python', JAVA: 'Java', JAVASCRIPT: 'JavaScript', SQL: 'SQL'
-}
+import { AREA_LABELS } from '@/lib/areas'
 
 const statusColor: Record<string, string> = {
   DRAFT: 'badge-yellow', SCHEDULED: 'badge-purple', ACTIVE: 'badge-teal',

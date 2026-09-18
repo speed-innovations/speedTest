@@ -26,6 +26,10 @@ enum AssessmentArea {
   JAVA
   JAVASCRIPT
   SQL
+  API
+  CLOUD
+  GENAI
+  DEPLOYMENT
 }
 
 enum TestStatus {

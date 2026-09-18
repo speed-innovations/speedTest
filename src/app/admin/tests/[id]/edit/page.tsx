@@ -4,17 +4,7 @@ import { useParams, useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { Plus, Minus, Save, ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
-
-const AREAS = [
-  { value: 'APTITUDE', label: 'Aptitude' },
-  { value: 'DOTNET', label: '.NET Programming' },
-  { value: 'COMMUNICATION', label: 'Communication' },
-  { value: 'AI', label: 'Artificial Intelligence' },
-  { value: 'PYTHON', label: 'Python Programming' },
-  { value: 'JAVA', label: 'Java Programming' },
-  { value: 'JAVASCRIPT', label: 'JavaScript' },
-  { value: 'SQL', label: 'SQL / Database' },
-]
+import { AREA_OPTIONS as AREAS } from '@/lib/areas'
 
 interface AreaConfig {
   area: string; count: number;

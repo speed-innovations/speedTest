@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
 import { Plus, Upload, Download, Search, Pencil, Trash2, Eye, Code2 } from 'lucide-react'
 import QuestionText from '@/components/QuestionText'
+import { AREAS, AREA_LABELS } from '@/lib/areas'
 
 const FENCE = /```[\w#+-]*\r?\n[\s\S]*?(?:\r?\n```|$)/g
 
@@ -33,12 +34,6 @@ function handleQuestionKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
   setter ? setter.call(el, next) : (el.value = next)
   el.dispatchEvent(new Event('input', { bubbles: true }))
   el.selectionStart = el.selectionEnd = s + 4
-}
-
-const AREAS = ['APTITUDE','DOTNET','COMMUNICATION','AI','PYTHON','JAVA','JAVASCRIPT','SQL']
-const AREA_LABELS: Record<string, string> = {
-  APTITUDE:'Aptitude', DOTNET:'.NET', COMMUNICATION:'Communication',
-  AI:'AI', PYTHON:'Python', JAVA:'Java', JAVASCRIPT:'JavaScript', SQL:'SQL'
 }
 
 interface Question {

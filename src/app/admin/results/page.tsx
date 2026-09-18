@@ -2,11 +2,8 @@
 import { useState, useEffect } from 'react'
 import { Download, Search, Eye, X, FileText, CheckCircle, XCircle, AlertTriangle, Flag } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { AREA_LABELS_SHORT as AREA_LABELS } from '@/lib/areas'
 
-const AREA_LABELS: Record<string, string> = {
-  APTITUDE:'Aptitude', DOTNET:'.NET', COMMUNICATION:'Comm.',
-  AI:'AI', PYTHON:'Python', JAVA:'Java', JAVASCRIPT:'JS', SQL:'SQL'
-}
 const DIFF_COLOR: Record<string, string> = { EASY: 'text-green-600', MEDIUM: 'text-yellow-600', HARD: 'text-red-600' }
 
 export default function ResultsPage() {

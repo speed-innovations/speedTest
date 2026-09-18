@@ -4,11 +4,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { ArrowLeft, Calendar, Clock, CheckSquare, Users, Pencil, Trash2, Zap, Building2, UserCheck, UserX, CheckCheck } from 'lucide-react'
-
-const AREA_LABELS: Record<string, string> = {
-  APTITUDE: 'Aptitude', DOTNET: '.NET', COMMUNICATION: 'Communication',
-  AI: 'AI', PYTHON: 'Python', JAVA: 'Java', JAVASCRIPT: 'JavaScript', SQL: 'SQL'
-}
+import { AREA_LABELS } from '@/lib/areas'
 
 const statusColor: Record<string, string> = {
   DRAFT: 'badge-yellow', SCHEDULED: 'badge-purple', ACTIVE: 'badge-teal',

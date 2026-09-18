@@ -4,11 +4,7 @@ import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import { Plus, Filter, Save, CheckCircle, XCircle, Pencil, Trash2, ExternalLink, Users } from 'lucide-react'
 
-const AREAS = ['APTITUDE','DOTNET','COMMUNICATION','AI','PYTHON','JAVA','JAVASCRIPT','SQL']
-const AREA_LABELS: Record<string,string> = {
-  APTITUDE:'Aptitude', DOTNET:'.NET', COMMUNICATION:'Communication',
-  AI:'AI', PYTHON:'Python', JAVA:'Java', JAVASCRIPT:'JavaScript', SQL:'SQL'
-}
+import { AREAS, AREA_LABELS } from '@/lib/areas'
 
 const emptyForm = {
   name: '', testId: '',
