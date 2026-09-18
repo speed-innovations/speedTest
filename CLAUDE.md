@@ -7,10 +7,19 @@ NextAuth. Deployed on Render.
 
 ## 1. Deployment — Render, through GitHub Actions
 
-**Production is Render, not Vercel.** The README's Vercel quick-start is stale;
-ignore it for deployment. `vercel.json`, `wrangler.jsonc` and
-`open-next.config.ts` are leftovers from earlier targets and are not the live
-path.
+**Production is Render.** The Vercel and Cloudflare config files
+(`vercel.json`, `wrangler.jsonc`, `open-next.config.ts`) and the `preview` /
+`cf:deploy` scripts have been removed — they described deploy targets this
+project does not use.
+
+`src/lib/db.ts` still carries a workerd/Hyperdrive branch from the Cloudflare
+attempt, and `vendor/prisma-client` still switches engine builds by runtime
+condition. Both are inert on Node — `getCloudflareContext()` throws outside a
+worker request and the code falls back to `DATABASE_URL` — so they cost
+nothing at runtime, but they are dead paths if Cloudflare is never revisited.
+Removing them means touching the database layer, so it has been left alone
+deliberately. `@opennextjs/cloudflare` must stay a dependency while that import
+remains.
 
 | | |
 |---|---|

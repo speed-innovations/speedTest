@@ -6,8 +6,6 @@
     "dev": "next dev -p 3001",
     "build": "prisma generate && next build",
     "start": "next start",
-    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "lint": "next lint",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "ts-node --project prisma/tsconfig.json prisma/seed.ts",
