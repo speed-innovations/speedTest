@@ -62,6 +62,13 @@ jobs:
       - name: Apply migrations to the test database
         run: npx prisma migrate deploy
 
+      # tests/responses.test.ts borrows three existing questions rather than
+      # creating its own, so an empty bank fails it before any assertion runs.
+      # The seed only inserts when the bank is empty, so this is a no-op
+      # anywhere that already has questions.
+      - name: Seed the test database
+        run: npm run db:seed
+
       - name: Typecheck application
         run: npx tsc --noEmit -p tsconfig.json
 
