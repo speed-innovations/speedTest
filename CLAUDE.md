@@ -91,6 +91,23 @@ unreliable over the pgBouncer transaction pooler.
 Local and production both hold the same 192 questions: SQL 60, AI 50, Python
 50, JavaScript 22, Aptitude 10.
 
+### Local development
+
+```bash
+npm run dev        # http://localhost:3001
+npm test           # includes integration tests; writes to DATABASE_URL
+npm run db:seed    # only inserts when the bank is empty
+npm run db:studio
+```
+
+There is no `preview` or `cf:deploy` script any more — those drove the
+Cloudflare build, which is gone.
+
+**On Windows, stop the dev server before `npm install` or `prisma generate`.**
+A running server holds `node_modules/.prisma/client/query_engine-windows.dll.node`
+open, and regeneration fails with `EPERM: operation not permitted, rename`. The
+error names a temp file and gives no hint that a process is the cause.
+
 ---
 
 ## 3. Question bank
@@ -172,4 +189,3 @@ already used for scoring, the same mistake would have altered results.
   creating its own.
 - 3 Python questions use "Both A and B" and are excluded from shuffling; fixing
   them means rewriting the option text to not name letters.
-- The README documents a Vercel deployment that is not how this ships.

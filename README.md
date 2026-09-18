@@ -238,6 +238,31 @@ npm run dev
 
 Open [http://localhost:3001](http://localhost:3001)
 
+Point `.env` at a local PostgreSQL instance rather than Supabase. `npm test`
+includes integration tests that create and delete real rows, so running the
+suite against Supabase exercises production. If you do switch `.env` back,
+`DATABASE_CA_CERT_B64` must move with the URLs — `src/lib/db.ts` pins that CA
+only when the variable is set, and a local connection with it set fails the TLS
+handshake with a misleading certificate error.
+
+### Scripts
+
+| Command | Does |
+|---------|------|
+| `npm run dev` | Dev server on port 3001 |
+| `npm run build` / `npm start` | `prisma generate && next build`, then serve |
+| `npm test` / `npm run test:watch` | Vitest — unit plus integration against `DATABASE_URL` |
+| `npm run db:migrate` | `prisma migrate deploy` |
+| `npm run db:seed` | Seed; inserts questions only when the bank is empty |
+| `npm run db:studio` | Prisma Studio |
+| `npm run lint` | ESLint |
+| `postinstall` | Runs `prisma generate` automatically after every `npm install` — which is why the note below matters |
+
+> **Windows:** stop the dev server before `npm install` or `prisma generate`. A
+> running server keeps the Prisma query engine DLL open and regeneration fails
+> with `EPERM: operation not permitted, rename`, which does not hint that a
+> process is holding it.
+
 ---
 
 ## 🌐 Tech Stack
