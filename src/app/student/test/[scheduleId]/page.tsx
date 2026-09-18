@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
+import QuestionText from '@/components/QuestionText'
 import { Clock, AlertTriangle, ChevronLeft, ChevronRight, CheckCircle, Flag } from 'lucide-react'
 
 interface Question {
@@ -411,7 +412,7 @@ export default function TestPage() {
                 <span className="bg-brand-purple text-white text-xs font-bold w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
                   {currentIdx + 1}
                 </span>
-                <p className="text-gray-800 font-medium leading-relaxed">{currentQ.questionText}</p>
+                <QuestionText text={currentQ.questionText} area={currentQ.area} className="text-gray-800 font-medium leading-relaxed min-w-0 flex-1" />
               </div>
 
               <div className="space-y-3">

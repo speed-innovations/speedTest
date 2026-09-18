@@ -19,8 +19,13 @@ module.exports = {
         }
       },
       fontFamily: {
-        sans: ['var(--font-geist-sans)', 'system-ui', 'sans-serif'],
-        mono: ['var(--font-geist-mono)', 'monospace'],
+        // The --font-geist-* variables are not defined anywhere in the app. A
+        // bare var() with no fallback makes the whole font-family declaration
+        // invalid, so `font-mono` silently inherited the sans face and code
+        // blocks lost their alignment. The in-var() fallback keeps the hook for
+        // a future next/font setup while guaranteeing a real stack today.
+        sans: ['var(--font-geist-sans, system-ui)', 'Segoe UI', 'sans-serif'],
+        mono: ['var(--font-geist-mono, ui-monospace)', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
       },
       backgroundImage: {
         'brand-gradient': 'linear-gradient(135deg, #3B1F8C 0%, #5A3DB5 50%, #007DA6 100%)',

@@ -1,7 +1,39 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import toast from 'react-hot-toast'
-import { Plus, Upload, Download, Search, Pencil, Trash2, Eye } from 'lucide-react'
+import { Plus, Upload, Download, Search, Pencil, Trash2, Eye, Code2 } from 'lucide-react'
+import QuestionText from '@/components/QuestionText'
+
+const FENCE = /```[\w#+-]*\r?\n[\s\S]*?(?:\r?\n```|$)/g
+
+/** True when the question carries a fenced code block. */
+const hasCode = (text: string) => { FENCE.lastIndex = 0; return FENCE.test(text ?? '') }
+
+/** The prose part only - a fenced snippet is unreadable in a table cell. */
+const questionSummary = (text: string) =>
+  (text ?? '').replace(FENCE, ' ').replace(/\s+/g, ' ').trim()
+
+/**
+ * Tab inserts four spaces instead of leaving the field. Indentation is the
+ * whole point of a code question, and a browser's default tab-to-next-field
+ * makes one impossible to type.
+ */
+function handleQuestionKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+  if (e.key !== 'Tab' || e.shiftKey) return
+  e.preventDefault()
+  const el = e.currentTarget
+  const { selectionStart: s, selectionEnd: end, value } = el
+  const next = value.slice(0, s) + '    ' + value.slice(end)
+
+  // React keeps its own copy of the last value on the DOM node, so assigning
+  // el.value directly would be swallowed as "no change". Going through the
+  // native setter updates that tracker, and the input event then reaches the
+  // onChange handler that owns this field's state.
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+  setter ? setter.call(el, next) : (el.value = next)
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  el.selectionStart = el.selectionEnd = s + 4
+}
 
 const AREAS = ['APTITUDE','DOTNET','COMMUNICATION','AI','PYTHON','JAVA','JAVASCRIPT','SQL']
 const AREA_LABELS: Record<string, string> = {
@@ -161,7 +193,12 @@ export default function QuestionBankPage() {
             {questions.map(q => (
               <tr key={q.id} className="hover:bg-gray-50 group">
                 <td className="p-4 text-sm text-gray-700 max-w-md">
-                  <p className="line-clamp-2">{q.questionText}</p>
+                  <p className="line-clamp-2">{questionSummary(q.questionText)}</p>
+                  {hasCode(q.questionText) && (
+                    <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-semibold uppercase tracking-wider text-brand-purple/70">
+                      <Code2 size={11} /> code
+                    </span>
+                  )}
                 </td>
                 <td className="p-4"><span className="badge-purple">{AREA_LABELS[q.area]}</span></td>
                 <td className="p-4"><span className={diffColor[q.difficulty]}>{q.difficulty}</span></td>
@@ -218,9 +255,18 @@ export default function QuestionBankPage() {
               </div>
               <div>
                 <label className="label">Question *</label>
-                <textarea className="input h-24 resize-none" value={form.questionText}
+                <textarea className="input h-44 font-mono text-[13px] leading-relaxed resize-y" value={form.questionText}
                   onChange={e => setForm(f => ({ ...f, questionText: e.target.value }))}
-                  placeholder="Enter the question..." required />
+                  onKeyDown={handleQuestionKeyDown}
+                  spellCheck={false}
+                  placeholder={'What will be the output of the following code snippet?\n\n```python\nfor i in range(3):\n    print(i)\n```'}
+                  required />
+                <p className="text-xs text-gray-500 mt-1.5">
+                  Wrap code in triple backticks with a language tag (<code className="font-mono text-brand-purple">```python</code>,{' '}
+                  <code className="font-mono text-brand-purple">```sql</code>, <code className="font-mono text-brand-purple">```javascript</code>,{' '}
+                  <code className="font-mono text-brand-purple">```java</code>, <code className="font-mono text-brand-purple">```csharp</code>)
+                  to show it in a highlighted box with indentation preserved. Tab indents inside the box.
+                </p>
               </div>
               {['A','B','C','D'].map(opt => (
                 <div key={opt}>
@@ -262,7 +308,7 @@ export default function QuestionBankPage() {
       {/* Preview Modal */}
       {preview && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setPreview(null)}>
-          <div className="bg-white rounded-2xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-4">
               <div className="flex gap-2">
                 <span className="badge-purple">{AREA_LABELS[preview.area]}</span>
@@ -270,7 +316,7 @@ export default function QuestionBankPage() {
               </div>
               <span className="text-sm text-gray-500">{preview.weightage} mark(s)</span>
             </div>
-            <p className="text-gray-800 font-medium mb-5">{preview.questionText}</p>
+            <QuestionText text={preview.questionText} area={preview.area} className="text-gray-800 font-medium mb-5" />
             <div className="space-y-2">
               {['A','B','C','D'].map(opt => (
                 <div key={opt} className={`flex items-center gap-3 p-3 rounded-lg border ${preview.correctAnswer === opt ? 'bg-green-50 border-green-300' : 'border-gray-100'}`}>

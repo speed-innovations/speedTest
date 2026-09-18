@@ -259,6 +259,30 @@ async function cleanup() {
   console.log(`cleaned up ${users.length} load-test students and their fixtures`)
 }
 
+// ---------------------------------------------------------------- barrier
+
+/**
+ * Students trickle in - the proctor lets them log in one at a time - but once
+ * they are all in they answer simultaneously for the length of the paper.
+ * Without this the stagger would also stagger the exam, and the run would
+ * never put more than one student on the answer endpoints at once, which is
+ * the thing worth measuring.
+ */
+function makeBarrier(expected: number) {
+  let arrived = 0
+  let release: () => void
+  const gate = new Promise<void>(r => { release = r })
+  return {
+    async wait() {
+      if (++arrived >= expected) release()
+      // A student who cannot start must not wedge everyone behind them.
+      await Promise.race([gate, new Promise(r => setTimeout(r, 120_000))])
+    },
+  }
+}
+
+let barrier: { wait(): Promise<void> }
+
 // ---------------------------------------------------------------- one exam
 
 interface Outcome { email: string; ok: boolean; error?: string; score?: number; answered?: number }
@@ -281,6 +305,9 @@ async function sitExam(email: string, scheduleId: string, index: number): Promis
     const attemptId: string = start.body.attemptId
     const questions: { id: string }[] = start.body.questions ?? []
     if (questions.length === 0) throw new Error('start returned no questions')
+
+    // Everyone is now sitting the paper; answer together from here.
+    await barrier.wait()
 
     // Autosave the way the UI does: batches of answers, spaced out.
     const answers: Record<string, string> = {}
@@ -336,6 +363,7 @@ async function main() {
   console.log(`students: ${STUDENTS}, save rounds: ${SAVE_ROUNDS}, login stagger: ${LOGIN_STAGGER_MS}ms`)
 
   const { scheduleId, emails } = await seed()
+  barrier = makeBarrier(STUDENTS)
 
   console.log('\nall students starting simultaneously...')
   const wall = Date.now()
