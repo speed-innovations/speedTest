@@ -4,31 +4,69 @@
 
 ---
 
-## 🚀 Quick Start (Vercel Deployment — Zero Manual Effort)
+## 🚀 Deployment (Render)
 
-### Step 1: Database Setup (Supabase — Free)
+Production runs on **Render**: https://speedtest-45s1.onrender.com
 
-1. Go to [supabase.com](https://supabase.com) → New Project
-2. Note down your **Database URL** and **Direct URL** from:
-   `Project Settings → Database → Connection String`
-   - `DATABASE_URL` = Connection pooling URL (port 6543)
-   - `DIRECT_URL` = Direct connection URL (port 5432)
+### How a commit reaches production
 
-### Step 2: Deploy to Vercel
+Push to `main`. That is the whole process — but it is worth knowing what
+carries it there, because it is not what Render's dashboard suggests.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new)
+Render's own auto-deploy **does not fire**. Its GitHub App was never installed
+on the org and the repository has no webhook, so a push never reaches Render;
+the service's `autoDeploy: yes` setting has nothing to act on.
 
-1. Push this repo to GitHub
-2. Connect to Vercel → Import repository
-3. Set all environment variables (see `.env.example`)
-4. Deploy!
+`.github/workflows/deploy.yml` is the delivery path instead. On a push to
+`main` it typechecks, applies migrations, seeds, runs the test suite and
+builds — and only then asks Render to deploy. It polls the deploy to
+completion and fails on `build_failed`, `update_failed` or `canceled`, so a
+red build never reaches production and a failed deploy never reports green.
 
-### Step 3: Run Database Migrations
+Watch a deploy with `gh run watch`, or in the Actions tab.
 
-After first deploy, run in Vercel terminal or locally:
+Requires a `RENDER_API_KEY` repository secret (Render → Account Settings → API
+Keys, then `gh secret set RENDER_API_KEY`). `RENDER_SERVICE_ID` may be set as a
+repository variable; it otherwise defaults to the live service.
+
+### Step 1: Database (Supabase)
+
+1. [supabase.com](https://supabase.com) → New Project
+2. From `Project Settings → Database → Connection String`:
+   - `DATABASE_URL` = pooled connection (port 6543)
+   - `DIRECT_URL` = session connection (port 5432)
+
+Both go through the pooler: the direct host `db.<ref>.supabase.co` is
+IPv6-only. Supabase serves a certificate under its own CA, which is in no
+public trust store, so `DATABASE_CA_CERT_B64` must be set for the Node runtime
+to verify the connection rather than skip verification.
+
+### Step 2: Create the Render service
+
+1. Render → New → Web Service → connect this repository
+2. Build command `npm install; npm run build`, start command `npm run start`
+3. Add the environment variables below
+4. Add `RENDER_API_KEY` to GitHub so the workflow can deploy
+
+### Step 3: Migrations
+
 ```bash
 npx prisma migrate deploy
 npx prisma db seed
+```
+
+### Local development
+
+`.env` points at a local PostgreSQL instance, not Supabase — the test suite
+contains integration tests that write real rows, so running them against
+Supabase would exercise production. When switching `.env` back to Supabase,
+uncomment `DATABASE_CA_CERT_B64` along with the URLs: `src/lib/db.ts` pins that
+CA only when the variable is set, and a local connection with it set fails the
+TLS handshake.
+
+```bash
+npm run dev      # http://localhost:3001
+npm test         # integration tests included; needs DATABASE_URL
 ```
 
 ---
@@ -37,21 +75,25 @@ npx prisma db seed
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | Supabase pooled connection (pgbouncer) |
-| `DIRECT_URL` | Supabase direct connection |
+| `DATABASE_URL` | Supabase pooled connection, port 6543 (pgbouncer) |
+| `DIRECT_URL` | Supabase session connection, port 5432 — used by `prisma migrate` for DDL and by the maintenance scripts |
+| `DATABASE_CA_CERT_B64` | Base64 of the Supabase Root 2021 CA. Pins TLS so the connection is verified rather than trusted blindly. Leave **unset** when pointing at a local database |
 | `NEXTAUTH_SECRET` | Random 32-char secret (`openssl rand -base64 32`) |
-| `NEXTAUTH_URL` | Your app URL e.g. `https://speedtest.vercel.app` |
-| `EMAIL_SERVER_HOST` | SMTP host (e.g. `smtp.gmail.com`) |
-| `EMAIL_SERVER_PORT` | SMTP port (e.g. `587`) |
-| `EMAIL_SERVER_USER` | SMTP email address |
-| `EMAIL_SERVER_PASSWORD` | Gmail App Password |
-| `EMAIL_FROM` | Sender email |
-| `NEXT_PUBLIC_APP_URL` | Your app URL |
+| `NEXTAUTH_URL` | Public https origin in production, e.g. `https://speedtest-45s1.onrender.com`. Auth callbacks break if this is left as localhost |
+| `BREVO_API_KEY` | Brevo v3 API key (`xkeysib-…`) for transactional email |
+| `EMAIL_FROM` | Sender address, verified in Brevo |
+| `NEXT_PUBLIC_APP_URL` | Public app URL. Optional on Render — `getBaseUrl()` falls back to `RENDER_EXTERNAL_URL`, which Render sets automatically |
 
-### Gmail App Password Setup
-1. Google Account → Security → 2-Step Verification → App Passwords
-2. Generate password for "Mail"
-3. Use as `EMAIL_SERVER_PASSWORD`
+### Email
+
+Transactional email goes through **Brevo's HTTP API over 443**, not SMTP.
+Render's free tier blocks outbound SMTP ports (25/465/587), so a nodemailer
+connection times out and hangs the request. Brevo also sends to any recipient
+after single-sender verification alone, with no DNS setup.
+
+Set `BREVO_API_KEY` and a Brevo-verified `EMAIL_FROM`. With either missing,
+sending degrades to a logged warning instead of failing the request — locally
+that means credentials print to the server console.
 
 ---
 
@@ -140,6 +182,28 @@ Download template from Admin → Question Bank → Export
 | Correct Answer | A, B, C, or D |
 | Marks | Numeric (e.g. 1, 2, 0.5) |
 
+### Code in questions
+
+Wrap a snippet in a fenced block with a language tag and it renders in a
+highlighted box with indentation preserved — which output-prediction questions
+depend on, since HTML otherwise collapses the leading spaces:
+
+    What will be the output?
+
+    ```python
+    for i in range(3):
+        print(i)
+    ```
+
+Supported tags: `python`, `javascript`, `sql`, `java`, `csharp`. An untagged
+fence falls back to the question's assessment area. Text without a fence
+renders as ordinary prose, so existing questions are unaffected.
+
+`scripts/` holds the maintenance tooling for the bank — bulk import, fence
+backfill, answer-key redistribution and restore-from-source. Each defaults to a
+dry run and writes only with `--yes`. See [CLAUDE.md](CLAUDE.md) before using
+them.
+
 ---
 
 ## 🔒 Security Features
@@ -172,7 +236,7 @@ npx prisma db seed
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+Open [http://localhost:3001](http://localhost:3001)
 
 ---
 
@@ -180,14 +244,16 @@ Open [http://localhost:3000](http://localhost:3000)
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | Next.js 14 (App Router) |
-| Database | PostgreSQL via Prisma ORM |
+| Framework | Next.js 15 (App Router) |
+| Database | PostgreSQL via Prisma ORM (pg driver adapter) |
 | Auth | NextAuth.js |
 | Styling | Tailwind CSS |
-| Email | Nodemailer |
+| Code highlighting | prism-react-renderer |
+| Email | Brevo HTTP API |
 | Excel | SheetJS (xlsx) |
-| Hosting | Vercel |
+| Hosting | Render |
 | DB Hosting | Supabase (free tier) |
+| CI/CD | GitHub Actions → Render |
 
 ---
 
