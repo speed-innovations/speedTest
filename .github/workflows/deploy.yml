@@ -1,0 +1,127 @@
+name: CI and deploy
+
+# Render has no GitHub App installed on this org and no repo webhook, so a
+# push never reaches it and its autoDeploy setting has nothing to act on.
+# This workflow is the delivery path instead - and unlike a native webhook it
+# only deploys once the checks have passed, so a red build cannot reach
+# production.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  # One run per branch; a newer push supersedes an in-flight run. Never cancel
+  # on main - that could abandon a half-finished deploy.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    # tests/responses.test.ts and tests/attempt-ownership.test.ts are
+    # integration tests: they create and delete real rows. They get a throwaway
+    # Postgres here so CI never writes to the Supabase database that serves
+    # production.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: speedtest
+          POSTGRES_PASSWORD: speedtest
+          POSTGRES_DB: speedtest_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U speedtest"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://speedtest:speedtest@localhost:5432/speedtest_test
+      DIRECT_URL: postgresql://speedtest:speedtest@localhost:5432/speedtest_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Matches Render's current default runtime. Checking on a different major
+      # than production is how "green in CI, broken on deploy" happens.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # postinstall runs prisma generate, so the client exists after this.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply migrations to the test database
+        run: npx prisma migrate deploy
+
+      - name: Typecheck application
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Typecheck scripts
+        run: npx tsc --noEmit -p scripts/tsconfig.json
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  deploy:
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger Render deploy and wait for it
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID || 'srv-dam2ts67bikc7384h4mg' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${RENDER_API_KEY:-}" ]; then
+            echo "::error::RENDER_API_KEY secret is not set - add it in Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+          deploy_id=$(curl -sS -X POST \
+            "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"commitId\":\"${GITHUB_SHA}\"}" \
+            | jq -r '.id')
+
+          if [ -z "$deploy_id" ] || [ "$deploy_id" = "null" ]; then
+            echo "::error::Render did not return a deploy id"
+            exit 1
+          fi
+          echo "Render deploy $deploy_id for ${GITHUB_SHA}"
+
+          # Poll to completion. Reporting success the moment the API accepts the
+          # request would make a failed build look like a successful deploy.
+          for _ in $(seq 1 90); do
+            sleep 10
+            status=$(curl -sS \
+              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${deploy_id}" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" | jq -r '.status')
+            echo "status: $status"
+            case "$status" in
+              live)
+                echo "::notice::Deployed ${GITHUB_SHA} to Render"
+                exit 0 ;;
+              build_failed|update_failed|canceled|pre_deploy_failed)
+                echo "::error::Render deploy $deploy_id finished as $status"
+                exit 1 ;;
+            esac
+          done
+
+          echo "::error::Render deploy $deploy_id did not finish within 15 minutes"
+          exit 1
