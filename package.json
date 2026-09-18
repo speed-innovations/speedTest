@@ -18,7 +18,6 @@
     "seed": "ts-node --project prisma/tsconfig.json prisma/seed.ts"
   },
   "dependencies": {
-    "@app/prisma-client": "file:vendor/prisma-client",
     "@headlessui/react": "^1.7.18",
     "@prisma/adapter-pg": "5.22.0",
     "@prisma/client": "^5.10.0",
@@ -39,7 +38,6 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.20.6",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/nodemailer": "^6.4.14",
@@ -51,8 +49,7 @@
     "tailwindcss": "^3.4.0",
     "ts-node": "^10.9.2",
     "typescript": "^5",
-    "vitest": "^2.1.9",
-    "wrangler": "4.133.0"
+    "vitest": "^2.1.9"
   },
   "allowScripts": {
     "prisma@5.22.0": true,

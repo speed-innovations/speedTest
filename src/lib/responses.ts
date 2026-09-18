@@ -1,4 +1,4 @@
-import { Prisma } from '@app/prisma-client'
+import { Prisma } from '@prisma/client'
 
 /**
  * Bulk writes for answer rows.

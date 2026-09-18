@@ -1,47 +1,27 @@
-// '@app/prisma-client' (vendor/prisma-client) picks the engine by runtime
-// condition: WASM on workerd, native on Node. Importing '@prisma/client'
-// directly here lands on runtime/library.js in the OpenNext build - esbuild
-// uses the `node` platform, and Prisma's generated condition map lists `node`
-// ahead of `workerd` - and that file calls eval(), which workerd forbids.
-import { PrismaClient } from '@app/prisma-client'
+import { PrismaClient } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { Pool, type PoolConfig } from 'pg'
-import { getCloudflareContext } from '@opennextjs/cloudflare'
 
-// Prisma's default client loads a native query engine binary, which workerd
-// cannot execute. The pg driver adapter replaces that engine with a pure-JS
-// Postgres driver, so the same client works on Workers and on Node.
 /**
  * Pool options, and why there are so few of them.
  *
- * On workerd the pool lives for exactly one request, and anything that keeps a
- * socket alive past the response keeps the request alive too: with
- * `idleTimeoutMillis: 0` every login hung until the runtime cancelled it with
- * "your Worker's code had hung and would never generate a response". Timers
- * armed by `query_timeout` are worse - they are bound to the I/O context of the
- * request that armed them, and firing in a later one produces "closure invoked
- * recursively or after being dropped".
- *
- * So the only deviation from pg's defaults is the connection ceiling. pg's own
- * idle reaping is what lets the request finish; leave it alone.
+ * The only deviation from pg's defaults is the connection ceiling. Supabase's
+ * pooler caps connections for the project as a whole, and a single request here
+ * never runs two queries at once, so a low ceiling costs nothing and stops a
+ * future Promise.all from fanning out across ten sockets. pg's own idle reaping
+ * handles the rest; leave it alone.
  */
 function poolOptions(connectionString: string, ssl?: PoolConfig['ssl']): PoolConfig {
   return {
     connectionString,
-    // On workerd this pool serves one request and that request never runs two
-    // queries at once, so the ceiling only exists to stop a future Promise.all
-    // from fanning out; pg's default of 10 would let a single request hold ten
-    // sockets through Hyperdrive, and Hyperdrive caps origin connections at 20.
     max: 3,
-    // Only set on the Node path (see nodeSsl). Left undefined on workerd, where
-    // Hyperdrive - not pg - terminates origin TLS.
     ...(ssl ? { ssl } : {}),
   }
 }
 
-// Prisma's default client loads a native query engine binary, which workerd
-// cannot execute. The pg driver adapter replaces that engine with a pure-JS
-// Postgres driver, so the same client works on Workers and on Node.
+// Prisma's default client loads a native query engine binary. The pg driver
+// adapter replaces that engine with a pure-JS Postgres driver, which keeps the
+// client working against the Supabase pooler without shipping the engine.
 function createClient(connectionString: string, ssl?: PoolConfig['ssl']) {
   return new PrismaClient({
     adapter: new PrismaPg(new Pool(poolOptions(connectionString, ssl))),
@@ -49,22 +29,19 @@ function createClient(connectionString: string, ssl?: PoolConfig['ssl']) {
   })
 }
 
-// TLS for the Node runtime only (Render, next dev, the seed script). Supabase
-// serves a leaf under its own CA - Supabase Root 2021 CA - which is not in any
-// public trust store, so a default handshake fails to verify (self-signed in
-// chain) and the only way to talk to it without pinning is to skip verification
-// entirely. Instead we pin that root: node builds leaf -> intermediate -> this
-// root and checks the *.pooler.supabase.com SAN against the host, so the link is
-// both encrypted and authenticated. The cert is a public value, carried as
-// base64 in DATABASE_CA_CERT_B64 so it survives a single-line env var.
+// Supabase serves a leaf under its own CA - Supabase Root 2021 CA - which is not
+// in any public trust store, so a default handshake fails to verify (self-signed
+// in chain) and the only way to talk to it without pinning is to skip
+// verification entirely. Instead we pin that root: node builds
+// leaf -> intermediate -> this root and checks the *.pooler.supabase.com SAN
+// against the host, so the link is both encrypted and authenticated. The cert is
+// a public value, carried as base64 in DATABASE_CA_CERT_B64 so it survives a
+// single-line env var.
 //
 // When the var is absent we return undefined and pg connects without TLS. That
 // is deliberate: it is the local-Postgres-over-loopback case, which needs no
 // TLS. Supabase requires TLS, so a missing cert there surfaces as a connection
 // error rather than a silent unverified connection.
-//
-// The workerd path never reaches this - it uses the Hyperdrive binding, whose
-// connection string drives createClient with no ssl argument.
 function nodeSsl(): PoolConfig['ssl'] | undefined {
   const caB64 = process.env.DATABASE_CA_CERT_B64
   if (!caB64) return undefined
@@ -73,66 +50,25 @@ function nodeSsl(): PoolConfig['ssl'] | undefined {
     rejectUnauthorized: true,
   }
 }
-type HyperdriveBinding = { connectionString?: string }
 
-// Returns the Hyperdrive binding when running on workerd, null everywhere else.
-// getCloudflareContext() throws outside a request context (next dev, the seed
-// script, vitest), which is the signal to fall back to DATABASE_URL.
-function hyperdrive(): { binding: HyperdriveBinding; requestKey: object } | null {
-  try {
-    const cf = getCloudflareContext()
-    const binding = (cf?.env as Record<string, unknown> | undefined)
-      ?.HYPERDRIVE as HyperdriveBinding | undefined
-
-    if (!binding?.connectionString) return null
-
-    // `ctx` is a fresh ExecutionContext per invocation, so it identifies the
-    // current request. Falling back to `cf` only loses per-request isolation,
-    // never correctness of the lookup itself.
-    return { binding, requestKey: (cf.ctx as object | undefined) ?? cf }
-  } catch {
-    return null
-  }
-}
-
-// One client per request on workerd. A pool held at module scope survives into
-// the next request, and workerd refuses to let a socket opened in an earlier
-// request be reused ("Cannot perform I/O on behalf of a different request"),
-// so the second request onwards would fail. Keyed by the per-request context
-// object and held weakly, so it is collected with the request.
-const perRequestClients = new WeakMap<object, PrismaClient>()
-
-// Node keeps a single client on globalThis, so `next dev`'s HMR does not open a
-// new connection pool on every reload.
+// A single client on globalThis, so `next dev`'s HMR does not open a new
+// connection pool on every reload.
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient }
 
 function activeClient(): PrismaClient {
-  const cf = hyperdrive()
-
-  if (cf) {
-    let client = perRequestClients.get(cf.requestKey)
-    if (!client) {
-      client = createClient(cf.binding.connectionString!)
-      perRequestClients.set(cf.requestKey, client)
-    }
-    return client
-  }
-
   if (!globalForPrisma.prisma) {
     const url = process.env.DATABASE_URL
-    if (!url) {
-      throw new Error(
-        'No database connection available: the HYPERDRIVE binding is missing and DATABASE_URL is not set.'
-      )
-    }
+    if (!url) throw new Error('No database connection available: DATABASE_URL is not set.')
     globalForPrisma.prisma = createClient(url, nodeSsl())
   }
   return globalForPrisma.prisma
 }
 
 // Exported as a proxy so the ~50 call sites keep importing a plain `prisma`
-// object while the client behind it is resolved per request. Methods are bound
-// to the real client, because a proxy as `this` breaks Prisma's internals.
+// object while the client behind it is built on first use rather than at import
+// time - `next build` imports this module while collecting page data, where
+// DATABASE_URL need not be set. Methods are bound to the real client, because a
+// proxy as `this` breaks Prisma's internals.
 export const prisma = new Proxy({} as PrismaClient, {
   get(_target, property) {
     const client = activeClient()

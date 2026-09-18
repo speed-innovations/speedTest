@@ -7,19 +7,18 @@ NextAuth. Deployed on Render.
 
 ## 1. Deployment — Render, through GitHub Actions
 
-**Production is Render.** The Vercel and Cloudflare config files
-(`vercel.json`, `wrangler.jsonc`, `open-next.config.ts`) and the `preview` /
-`cf:deploy` scripts have been removed — they described deploy targets this
-project does not use.
+**Production is Render, and only Render.** Every trace of the earlier Vercel and
+Cloudflare targets is gone: the config files (`vercel.json`, `wrangler.jsonc`,
+`open-next.config.ts`), the `preview` / `cf:deploy` scripts, the
+`vendor/prisma-client` engine shim, the workerd/Hyperdrive branch in
+`src/lib/db.ts`, and the `@opennextjs/cloudflare` and `wrangler` dependencies.
 
-`src/lib/db.ts` still carries a workerd/Hyperdrive branch from the Cloudflare
-attempt, and `vendor/prisma-client` still switches engine builds by runtime
-condition. Both are inert on Node — `getCloudflareContext()` throws outside a
-worker request and the code falls back to `DATABASE_URL` — so they cost
-nothing at runtime, but they are dead paths if Cloudflare is never revisited.
-Removing them means touching the database layer, so it has been left alone
-deliberately. `@opennextjs/cloudflare` must stay a dependency while that import
-remains.
+`src/lib/db.ts` is now one path: a pg `Pool` behind Prisma's driver adapter,
+built on first use and cached on `globalThis` so HMR does not open a new pool
+per reload. It is still exported through a `Proxy` — not for per-request
+clients as before, but so the client is constructed lazily; `next build`
+imports this module while collecting page data, where `DATABASE_URL` need not
+be set.
 
 | | |
 |---|---|
