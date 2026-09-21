@@ -69,7 +69,7 @@ which is the real safeguard.
 
 ## Steps
 
-- [ ] **Step 1: Install and vendor MediaPipe**
+- [x] **Step 1: Install and vendor MediaPipe**
 
 ```bash
 npm install @mediapipe/tasks-vision
@@ -79,7 +79,15 @@ Copy the WASM bundle out of the package and fetch the model:
 
 ```bash
 mkdir -p public/mediapipe/wasm
-cp node_modules/@mediapipe/tasks-vision/wasm/* public/mediapipe/wasm/
+# Only the single-threaded builds. The wasm/ directory is ~34 MB because it also
+# ships vision_wasm_module_internal.*, the threaded build, which needs
+# SharedArrayBuffer and so can never load without COOP/COEP headers this app
+# deliberately does not set. Copying it would add 12 MB of dead weight to the repo.
+cp node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.js \
+   node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.wasm \
+   node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.js \
+   node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_nosimd_internal.wasm \
+   public/mediapipe/wasm/
 curl -L -o public/mediapipe/face_landmarker.task \
   https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
 ```
@@ -98,7 +106,7 @@ Confirm nothing in `.gitignore` excludes it:
 git check-ignore -v public/mediapipe/face_landmarker.task || echo "OK: will be committed"
 ```
 
-- [ ] **Step 2: Write the classifier test first** — `tests/proctoring-gaze-classify.test.ts`
+- [x] **Step 2: Write the classifier test first** — `tests/proctoring-gaze-classify.test.ts`
 
 ```ts
 import { describe, it, expect } from 'vitest'
@@ -159,7 +167,7 @@ describe('classifyGaze', () => {
 })
 ```
 
-- [ ] **Step 3: Implement `gaze-classify.ts`**
+- [x] **Step 3: Implement `gaze-classify.ts`**
 
 `extractSignals` derives yaw and pitch from
 `result.facialTransformationMatrixes[0].data` — a column-major 4×4. Take the
@@ -171,7 +179,7 @@ Order of precedence inside `classifyGaze`, which the tests above pin:
 face count problems first, then horizontal, then vertical, with hysteresis
 applied against `prev`.
 
-- [ ] **Step 4: Write the state machine test — the PRD's cases, verbatim**
+- [x] **Step 4: Write the state machine test — the PRD's cases, verbatim**
 
 `tests/proctoring-gaze-state.test.ts`:
 
@@ -273,14 +281,14 @@ describe('GazeStateMachine', () => {
 })
 ```
 
-- [ ] **Step 5: Implement `gaze-state.ts`** until those pass. Independent
+- [x] **Step 5: Implement `gaze-state.ts`** until those pass. Independent
       cooldowns per warning type; `UNCERTAIN` is explicitly a no-op.
 
 ```bash
 npx vitest run tests/proctoring-gaze-state.test.ts tests/proctoring-gaze-classify.test.ts
 ```
 
-- [ ] **Step 6: Write `gaze-monitor.ts`** — the shell
+- [x] **Step 6: Write `gaze-monitor.ts`** — the shell
 
 ```
 - FilesetResolver.forVisionTasks('/mediapipe/wasm'), local path not a CDN
@@ -299,7 +307,7 @@ Single-threaded WASM only: there are no COOP/COEP headers on this app, so
 `SharedArrayBuffer` is unavailable and the threaded build will not run. Do not
 add those headers as part of this work — they change behaviour app-wide.
 
-- [ ] **Step 7: Typecheck and full suite**
+- [x] **Step 7: Typecheck and full suite**
 
 ```bash
 npx tsc --noEmit -p tsconfig.json
@@ -309,24 +317,30 @@ npx tsc --noEmit -p tsconfig.json
 npm test
 ```
 
-- [ ] **Step 8: Confirm no frame ever leaves the browser**
+- [x] **Step 8: Confirm no frame ever leaves the browser**
 
 ```bash
-grep -rn "fetch\|XMLHttpRequest\|sendBeacon" src/lib/proctoring/client/gaze-monitor.ts src/lib/proctoring/client/gaze-classify.ts src/lib/proctoring/client/gaze-state.ts || echo "OK: gaze modules make no network calls"
+grep -rnE "(^|[^a-zA-Z.])(fetch|sendBeacon)\s*\(|new XMLHttpRequest" src/lib/proctoring/client/gaze-monitor.ts src/lib/proctoring/client/gaze-classify.ts src/lib/proctoring/client/gaze-state.ts || echo "OK: gaze modules make no network calls"
 ```
+
+Match call sites, not the word: `gaze-monitor.ts` explains in a comment *why*
+the model is self-hosted rather than CDN-fetched, and a bare `fetch` grep flags
+that prose as a violation.
 
 This must print the OK line. Gaze analysis is local by design, and this is the
 check that keeps it that way as the code changes.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 8: local MediaPipe gaze detection with pure classifier and state machine"
 ```
 
-Do not push. Note this commit includes ~6 MB of vendored model and WASM.
+Do not push. Note this commit includes **~26 MB** of vendored model and WASM
+(3.6 MB model + 23 MB of SIMD and no-SIMD WASM), not the ~6 MB originally
+assumed here.
 
-- [ ] **Step 10: Update `PROGRESS.md`.**
+- [x] **Step 10: Update `PROGRESS.md`.**
 
 ---
 
