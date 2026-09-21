@@ -21,7 +21,7 @@ Branch: `feat/proctoring`
 | 3 | Quota and reservation | ✅ DONE | ed5c3dd | 2026-09-21 |
 | 4 | Session lifecycle API | ✅ DONE | ef1f428 | 2026-09-21 |
 | 5 | Upload APIs | ✅ DONE | 1e7e20d | 2026-09-21 |
-| 6 | Events API | ⬜ NOT STARTED | — | — |
+| 6 | Events API | ✅ DONE | 8289cc9 | 2026-09-21 |
 | 7 | Client core services | ⬜ NOT STARTED | — | — |
 | 8 | Gaze detection | ⬜ NOT STARTED | — | — |
 | 9 | Candidate UI | ⬜ NOT STARTED | — | — |
@@ -244,4 +244,32 @@ through a route.
 Verification: `npx tsc --noEmit -p tsconfig.json` exit 0 (checked the exit code,
 not just the output); `npm test` exit 0, 152 passed across 14 files.
 `scripts/tsconfig.json` not run — no scripts touched.
+
+### Part 6 — 2026-09-21
+
+Commit `8289cc9`, local, not pushed. **The backend is now complete** — Parts 7-9
+build the client against these endpoints and should not need to change the API
+surface.
+
+The part file was accurate; one small hardening and one thing checked rather
+than assumed:
+
+- `z.record(valueSchema)` with a single argument was a zod 3 signature, so it
+  was worth confirming under zod 4.6 rather than trusting it. It still works and
+  still validates values (verified directly: an over-long value and a nested
+  object are both rejected). I used the two-argument form anyway,
+  `z.record(z.string().max(40), ...)`, because the single-argument form bounds
+  only the values — a client could otherwise send a megabyte of *key* text.
+  Part file updated.
+- `metadata: e.metadata ?? undefined` on a `createMany` omits the column and
+  takes the DB default of null. That is the right outcome here and not the
+  Prisma `undefined` hazard the README warns about, since there is no existing
+  row to leave alone.
+
+Two tests beyond the part file's list: non-gaze events must not touch
+`gazeWarningCount`, and bounded metadata round-trips through the Json column.
+
+Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
+160 passed across 15 files. `scripts/tsconfig.json` not run — no scripts
+touched.
 
