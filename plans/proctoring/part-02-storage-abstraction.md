@@ -56,7 +56,7 @@ only; Part 5 enforces the real size with `HeadObject` after the upload lands.
 
 ## Steps
 
-- [ ] **Step 1: Install the SDK**
+- [x] **Step 1: Install the SDK**
 
 ```bash
 npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner
@@ -64,7 +64,7 @@ npm install @aws-sdk/client-s3 @aws-sdk/s3-request-presigner
 
 Server-only. Confirm after Part 9 that neither appears in the client bundle.
 
-- [ ] **Step 2: Write `src/lib/proctoring/storage/types.ts`**
+- [x] **Step 2: Write `src/lib/proctoring/storage/types.ts`**
 
 ```ts
 /**
@@ -91,7 +91,7 @@ export interface ObjectStorage {
 }
 ```
 
-- [ ] **Step 3: Write the failing key test** — `tests/proctoring-storage-keys.test.ts`
+- [x] **Step 3: Write the failing key test** — `tests/proctoring-storage-keys.test.ts`
 
 ```ts
 import { describe, it, expect } from 'vitest'
@@ -152,7 +152,7 @@ npx vitest run tests/proctoring-storage-keys.test.ts
 
 Expected: fails, module not found.
 
-- [ ] **Step 4: Write `src/lib/proctoring/storage/keys.ts`**
+- [x] **Step 4: Write `src/lib/proctoring/storage/keys.ts`**
 
 ```ts
 /**
@@ -200,13 +200,13 @@ export function isProctoringKey(key: string): boolean {
 }
 ```
 
-- [ ] **Step 5: Run the key test — expect pass**
+- [x] **Step 5: Run the key test — expect pass**
 
 ```bash
 npx vitest run tests/proctoring-storage-keys.test.ts
 ```
 
-- [ ] **Step 6: Write `src/lib/proctoring/storage/mock.ts`**
+- [x] **Step 6: Write `src/lib/proctoring/storage/mock.ts`**
 
 ```ts
 import type { ObjectStorage, ObjectMetadata } from './types'
@@ -271,7 +271,7 @@ export class MockStorage implements ObjectStorage {
 }
 ```
 
-- [ ] **Step 7: Write `src/lib/proctoring/storage/r2.ts`**
+- [x] **Step 7: Write `src/lib/proctoring/storage/r2.ts`**
 
 ```ts
 import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
@@ -353,7 +353,7 @@ export class CloudflareR2Storage implements ObjectStorage {
 }
 ```
 
-- [ ] **Step 8: Write `src/lib/proctoring/storage/index.ts`**
+- [x] **Step 8: Write `src/lib/proctoring/storage/index.ts`**
 
 ```ts
 import type { ObjectStorage } from './types'
@@ -385,7 +385,7 @@ export function getStorage(): ObjectStorage {
 export function resetStorageForTests(): void { cached = null }
 ```
 
-- [ ] **Step 9: Write `tests/proctoring-storage-mock.test.ts`**
+- [x] **Step 9: Write `tests/proctoring-storage-mock.test.ts`**
 
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest'
@@ -434,13 +434,13 @@ describe('MockStorage', () => {
 })
 ```
 
-- [ ] **Step 10: Run both storage tests — expect pass**
+- [x] **Step 10: Run both storage tests — expect pass**
 
 ```bash
 npx vitest run tests/proctoring-storage-keys.test.ts tests/proctoring-storage-mock.test.ts
 ```
 
-- [ ] **Step 11: Typecheck and full suite**
+- [x] **Step 11: Typecheck and full suite**
 
 ```bash
 npx tsc --noEmit -p tsconfig.json
@@ -450,7 +450,7 @@ npx tsc --noEmit -p tsconfig.json
 npm test
 ```
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 2: storage abstraction with R2 and mock providers"
@@ -458,7 +458,7 @@ git add -A && git commit -m "proctoring part 2: storage abstraction with R2 and 
 
 Do not push.
 
-- [ ] **Step 13: Update `PROGRESS.md`.**
+- [x] **Step 13: Update `PROGRESS.md`.**
 
 ---
 
