@@ -416,7 +416,11 @@ describe('getUsageReport', () => {
     )
   })
 
-  it('counts assets past retention as awaiting cleanup', async () => {
+  it('counts assets past retention as awaiting cleanup but not against the budget', async () => {
+    // Deliberately enormous, and far larger than anything any other suite
+    // writes. That is what makes the exclusion assertion below a bound rather
+    // than a delta - see the comment there.
+    const STALE_BYTES = 1_500_000_000
     const before = (await getUsageReport()).assetsAwaitingCleanup
 
     const stale = await prisma.proctoringAsset.create({
@@ -425,7 +429,7 @@ describe('getUsageReport', () => {
         type: 'SCREENSHOT',
         objectKey: `assessment-proctoring/${scheduledSessionId}/screens/000098.webp`,
         contentType: 'image/webp',
-        byteSize: 70_000,
+        byteSize: STALE_BYTES,
         sequence: 98,
         capturedAt: new Date(Date.now() - 100 * 3_600_000),
         uploadedAt: new Date(Date.now() - 100 * 3_600_000),
@@ -434,13 +438,25 @@ describe('getUsageReport', () => {
       },
     })
 
-    const after = await getUsageReport()
-    expect(after.assetsAwaitingCleanup).toBe(before + 1)
-    // Past retention, so it no longer counts against the budget even though the
-    // object is still in the bucket.
-    expect(after.storedBytes).toBe((await getUsageReport()).storedBytes)
+    try {
+      const after = await getUsageReport()
 
-    await prisma.proctoringAsset.delete({ where: { id: stale.id } })
+      // At least one more: this row must be counted, and a concurrent suite
+      // adding its own past-retention asset can only push the number higher.
+      expect(after.assetsAwaitingCleanup).toBeGreaterThanOrEqual(before + 1)
+
+      // The invariant that matters: currentUsageBytes filters on
+      // expiresAt > now, so a 1.5 GB asset past its retention must not appear
+      // in storedBytes at all - even though the object is still in the bucket.
+      //
+      // Asserted as a BOUND, not as a before/after delta. Other suites write
+      // into these tables and vitest may run them concurrently, so subtracting
+      // two reads is a race - which is exactly how the first version of this
+      // test flaked about half the time.
+      expect(after.storedBytes).toBeLessThan(STALE_BYTES)
+    } finally {
+      await prisma.proctoringAsset.delete({ where: { id: stale.id } })
+    }
   })
 
   it('reports averages per asset type', async () => {
