@@ -17,7 +17,7 @@ Branch: `feat/proctoring`
 |---|---|---|---|---|
 | 0 | Plan infrastructure | ✅ DONE | c9b9f1c | 2026-09-21 |
 | 1 | Schema, migration, config | ✅ DONE | 5a3265a | 2026-09-21 |
-| 2 | Storage abstraction | ⬜ NOT STARTED | — | — |
+| 2 | Storage abstraction | ✅ DONE | 908fa30 | 2026-09-21 |
 | 3 | Quota and reservation | ⬜ NOT STARTED | — | — |
 | 4 | Session lifecycle API | ⬜ NOT STARTED | — | — |
 | 5 | Upload APIs | ⬜ NOT STARTED | — | — |
@@ -110,4 +110,28 @@ constraint name, so the part file's expected-output line is slightly optimistic
 
 Verification: `npx tsc --noEmit -p tsconfig.json` clean; `npm test` 84 passed
 across 7 files. `scripts/tsconfig.json` not run — this part touched no scripts.
+
+### Part 2 — 2026-09-21
+
+Commit `908fa30`, local, not pushed. The part file's code was accurate — no
+corrections needed to it.
+
+- `@aws-sdk/client-s3` resolved to **3.1136.0**, far past the 3.729 cutoff, so
+  `requestChecksumCalculation: 'WHEN_REQUIRED'` is load-bearing, not
+  precautionary. It is set, and `ContentLength` is not signed.
+- Added three tests beyond the part file's list, in
+  `tests/proctoring-storage-mock.test.ts`, covering `getStorage()` itself: the
+  mock default, memoisation, and — the one that matters — that selecting `r2`
+  without credentials **throws** rather than silently handing back a
+  `MockStorage`. The part file specified that behaviour in its "Done when" but
+  tested only `MockStorage`, so nothing would have caught a regression to a
+  fallback.
+- No `.env` change: `PROCTORING_STORAGE_PROVIDER` is unset locally, which
+  defaults to `mock`. Nothing in this part needs credentials.
+
+Still unverified, and must not be claimed: that R2 actually accepts these
+presigned URLs. That needs real credentials and a browser PUT — Part 14.
+
+Verification: `npx tsc --noEmit -p tsconfig.json` clean; `npm test` 100 passed
+across 9 files. `scripts/tsconfig.json` not run — no scripts touched.
 
