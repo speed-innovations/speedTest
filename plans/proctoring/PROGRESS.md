@@ -24,7 +24,7 @@ Branch: `feat/proctoring`
 | 6 | Events API | ✅ DONE | 8289cc9 | 2026-09-21 |
 | 7 | Client core services | ✅ DONE | 0114b9b | 2026-09-21 |
 | 8 | Gaze detection | ✅ DONE | f45e1bc | 2026-09-21 |
-| 9 | Candidate UI | ⬜ NOT STARTED | — | — |
+| 9 | Candidate UI | ✅ DONE | 220625b | 2026-09-21 |
 | 10 | Admin review UI | ⬜ NOT STARTED | — | — |
 | 11 | Retention and cleanup | ⬜ NOT STARTED | — | — |
 | 12 | zod retrofit | ⬜ NOT STARTED | — | — |
@@ -365,3 +365,86 @@ Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
 226 passed across 21 files. `scripts/tsconfig.json` not run — no scripts
 touched.
 
+### Part 9 — 2026-09-21
+
+Commit `220625b`, local, not pushed. **Step 12 (the manual browser smoke test)
+is NOT done** — see below. Every other step is ticked.
+
+**`needsRecovery` is not the formula the part file gave.** The part file said
+`enabled && alreadyStarted && state !== 'ACTIVE'`. That is correct at the moment
+of load and wrong immediately after: a candidate who stops screen sharing
+mid-exam leaves ACTIVE, so the exam UI would be replaced by the recovery screen
+and their questions would vanish under them. It is now
+`enabled && alreadyStarted && !captureLive`, where `captureLive` records whether
+this page instance ever brought capture up. A mid-exam screen stop shows a
+resume banner beside the questions instead. Part file corrected.
+
+Three additive changes to `UseProctoringResult`, all because a component could
+not do its job without them — part file updated:
+
+- `startError` — `ProctoringSetup` cannot otherwise tell a 503 storage refusal
+  from any other failure, and `ProctoringRecovery` needs the
+  `PROCTORING_SESSION_CLOSED` code.
+- `capture` (`recording`/`screenSharing`/`cameraLive`/`micLive`) — the status
+  indicator must not infer "recording" from the state name.
+- `DeviceStatus` was referenced by the part file but never defined.
+
+**Order of the permission prompts is load-bearing: screen BEFORE camera.**
+`getDisplayMedia` needs transient user activation, which expires a few seconds
+after the click, and a first-time camera prompt easily outlasts it. Asking for
+the screen while the gesture is fresh is what stops "allow camera" from making
+screen sharing impossible. Consequence the tests assert: a screen denial never
+prompts for the camera at all.
+
+**`PROCTORING_SCREEN_REQUIRED=false` is not honoured by the pre-check.** The flag
+arrives with the session config, and the session must not be created before
+permissions are granted — otherwise a candidate who then denies them leaves a
+live ACTIVE session that `/start` would accept, defeating the whole gate. The
+pre-check therefore always requires screen sharing, which is the config default.
+Honouring the flag needs it on the session GET response. Flagged, not fixed.
+
+**Gaze inference reads the hook's own off-DOM video element**, not the rendered
+`CameraPreview`. The preview unmounts when the page switches from the pre-check
+to the questions; binding inference to it would kill detection at that exact
+moment. Separately, the visible preview needed an effect with **no dependency
+array** to re-attach `srcObject` after that remount — a one-shot attach at start
+left the exam's self-view permanently blank. Found by reading the diff, not by a
+test; jsdom would not have caught it.
+
+**MediaPipe must be `vi.mock`ed in any jsdom test that starts proctoring.**
+`GazeMonitor.create` never settles under jsdom (3.6 MB model plus multi-megabyte
+WASM), so it hangs the suite rather than failing it — that was the first test
+failure here, presenting as a state stuck in `STARTING`. Both new test files mock
+the `gaze-monitor` module.
+
+`lucide-react` is 0.344 and has no `CloudUpload`; it is `UploadCloud`.
+
+**A swept session is a dead end for the candidate.** The unique index on the
+attempt FK is per attempt, not per attempt-and-status, so once the stale sweep
+marks a session INTERRUPTED (180 s without a heartbeat by default) it cannot be
+reopened — while the exam clock keeps running. `ProctoringRecovery` detects
+`PROCTORING_SESSION_CLOSED` and says so plainly instead of offering a button that
+can only fail again. This is inherited from Part 4's locked schema, not
+introduced here, but Part 14 or 15 should decide whether it is acceptable.
+
+**Step 12 is blocked, not skipped.** The smoke test needs a signed-in student.
+The local fixture is there — `Manual Verification Test`
+(`cmu5hlfs50006hg3hf7xpxjyy`, `proctoringEnabled = false`, 5 min) with students
+`student.a@` / `student.b@mitcoe.edu.in` — but no password is recorded for
+either, and the schedule window closed on 2026-09-17. Setting a dev password and
+moving the window are both local-Postgres writes and the write was refused by
+this session's permission policy; I did not work around it. **Nothing about the
+non-proctored path has been confirmed in a real browser.** The hook-level
+regression guard passes (`enabled: false` issues no `getUserMedia` and no
+`fetch`, state stays `IDLE`), and `npm run build` succeeds, but that is not the
+same evidence. Part 14 must do this, and must also cover the two things no test
+in Parts 8–9 can reach: a real camera proving the gaze sign convention, and a
+real R2 presigned PUT.
+
+Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
+**238 passed across 23 files**; `npm run build` exit 0 — both candidate pages at
+199 kB First Load JS, identical, which is itself a parity check.
+`grep -rl "R2_SECRET_ACCESS_KEY\|R2_ACCESS_KEY_ID" .next/static` empty, and so
+is a grep for the R2 endpoint host and `DATABASE_URL`. `scripts/tsconfig.json`
+not run — no scripts touched. Step 7's grep parity: 7 and 7 on the narrow
+pattern, 49 and 49 on every proctoring reference.

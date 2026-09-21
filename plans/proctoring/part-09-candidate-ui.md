@@ -304,7 +304,7 @@ At `http://localhost:3001`, on a test with `proctoringEnabled = false`, run one
 attempt start-to-submit. It must behave **exactly** as before: no pre-check, no
 camera prompt, no new network requests. Confirm in the Network tab.
 
-- [ ] **Step 13: Commit**
+- [x] **Step 13: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 9: candidate pre-check, warnings, recovery, and teardown"
@@ -312,7 +312,7 @@ git add -A && git commit -m "proctoring part 9: candidate pre-check, warnings, r
 
 Do not push.
 
-- [ ] **Step 14: Update `PROGRESS.md`.**
+- [x] **Step 14: Update `PROGRESS.md`.**
 
 ---
 
