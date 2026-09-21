@@ -16,7 +16,7 @@ Branch: `feat/proctoring`
 | # | Part | Status | Commit | Date |
 |---|---|---|---|---|
 | 0 | Plan infrastructure | ✅ DONE | c9b9f1c | 2026-09-21 |
-| 1 | Schema, migration, config | ⬜ NOT STARTED | — | — |
+| 1 | Schema, migration, config | ✅ DONE | 5a3265a | 2026-09-21 |
 | 2 | Storage abstraction | ⬜ NOT STARTED | — | — |
 | 3 | Quota and reservation | ⬜ NOT STARTED | — | — |
 | 4 | Session lifecycle API | ⬜ NOT STARTED | — | — |
@@ -79,3 +79,35 @@ Pre-existing repo conditions worth knowing before starting Part 1:
 - Local Postgres is 18; production Supabase is not. The migration is additive
   DDL plus one `CHECK`, so divergence is unlikely — but Part 15 verifies the
   tables by inspection rather than trusting command output.
+
+### Part 1 — 2026-09-21
+
+Migration `20260921095859_add_proctoring`, applied to local Postgres only.
+Supabase untouched. Commit `5a3265a`, local, not pushed.
+
+Deviations from the part file, both driven by zod:
+
+- **zod resolved to 4.6.5**, not v3. The part file's schema code compiles and
+  behaves as written — `z.string().url()` still exists in v4 (deprecated in
+  favour of `z.url()`, not removed), `.optional().transform().pipe()` is
+  unchanged, and `parsed.error.issues` is unchanged. No rewrite was needed.
+  A future zod major will remove `z.string().url()`; the only use is
+  `r2Schema.R2_ENDPOINT`.
+- **Empty strings are treated as unset**, in both the `bool`/`int` helpers and
+  `R2_ENDPOINT`. Step 16 anticipated this for `R2_ENDPOINT` only, but the same
+  hazard applies to every variable: `.env.example` ships `VAR=""` placeholders
+  and dotenv loads those as `''`, so `Number('')` is `0` and would have failed
+  every `min()` bound. `R2_ENDPOINT` is `z.union([z.string().url(),
+  z.literal('')])` and falls back to the account-derived endpoint. Two extra
+  tests cover this (10 tests total, not 8).
+
+The CHECK constraint was verified two ways rather than one: the insert with
+neither FK set is rejected, and `pg_constraint` shows
+`ProctoringSession_exactly_one_attempt` with the expected definition. The
+rejection message's last line is the Postgres `DETAIL:` row dump, not the
+constraint name, so the part file's expected-output line is slightly optimistic
+— the name appears earlier in the multi-line message.
+
+Verification: `npx tsc --noEmit -p tsconfig.json` clean; `npm test` 84 passed
+across 7 files. `scripts/tsconfig.json` not run — this part touched no scripts.
+
