@@ -15,7 +15,7 @@ Branch: `feat/proctoring`
 
 | # | Part | Status | Commit | Date |
 |---|---|---|---|---|
-| 0 | Plan infrastructure | ✅ DONE | — | 2026-09-21 |
+| 0 | Plan infrastructure | ✅ DONE | c9b9f1c | 2026-09-21 |
 | 1 | Schema, migration, config | ⬜ NOT STARTED | — | — |
 | 2 | Storage abstraction | ⬜ NOT STARTED | — | — |
 | 3 | Quota and reservation | ⬜ NOT STARTED | — | — |
