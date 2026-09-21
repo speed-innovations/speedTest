@@ -20,7 +20,7 @@ Branch: `feat/proctoring`
 | 2 | Storage abstraction | ✅ DONE | 908fa30 | 2026-09-21 |
 | 3 | Quota and reservation | ✅ DONE | ed5c3dd | 2026-09-21 |
 | 4 | Session lifecycle API | ✅ DONE | ef1f428 | 2026-09-21 |
-| 5 | Upload APIs | ⬜ NOT STARTED | — | — |
+| 5 | Upload APIs | ✅ DONE | 1e7e20d | 2026-09-21 |
 | 6 | Events API | ⬜ NOT STARTED | — | — |
 | 7 | Client core services | ⬜ NOT STARTED | — | — |
 | 8 | Gaze detection | ⬜ NOT STARTED | — | — |
@@ -211,5 +211,37 @@ its first caller. The ~50 existing inline admin checks are untouched by design.
 Verification: `npx tsc --noEmit -p tsconfig.json` clean; `npm test` 133 passed
 across 12 files — including the pre-existing `attempt-ownership` and `responses`
 suites, which exercise the two `/start` routes the gate was added to.
+`scripts/tsconfig.json` not run — no scripts touched.
+
+### Part 5 — 2026-09-21
+
+Commit `1e7e20d`, local, not pushed.
+
+**`tsconfig.json` targets `es5`.** The part file's `evictExpired` iterated a Map
+with `for...of` and spread, which is `TS2802` without `downlevelIteration` — the
+first typecheck failure in this plan. Rewritten with `forEach` rather than
+changing the project's compile target for one helper; part file updated to
+match. **Worth remembering for every later part: no `for...of` over a Map or
+Set, no spreading one, in `src/`.** (Arrays are fine.) `scripts/` has its own
+tsconfig and is not affected.
+
+One deliberate tightening beyond the part file: `issueUploadUrl` signs
+`asset.objectKey` — the key already stored on the row — not the key it just
+derived. On a retry that changed a screenshot's format the derived extension
+would differ from the object the row points at, and the signed URL would write
+to a key nothing referenced. Commented in place.
+
+The oversize case is tested the way the part file asked, and it is the one that
+would catch a regression to trusting client-declared sizes: nothing in the
+request body carries a size at all, so only `HeadObject` can see 400 MB arrive
+under a request that implied 40 KB. The object is deleted, the asset marked
+`FAILED` with `byteSize` 0, and `storageUsedBytes` stays 0.
+
+Routes are written but not exercised over HTTP; as with Parts 3-4 the tests
+drive the lib layer. The rate limiter is therefore tested directly and not
+through a route.
+
+Verification: `npx tsc --noEmit -p tsconfig.json` exit 0 (checked the exit code,
+not just the output); `npm test` exit 0, 152 passed across 14 files.
 `scripts/tsconfig.json` not run — no scripts touched.
 
