@@ -55,7 +55,7 @@ export async function activeSessionFor(a: ResolvedAttempt): Promise<SessionView 
 
 ## Steps
 
-- [ ] **Step 1: Add `requireAdmin` to `src/lib/attempt-auth.ts`**
+- [x] **Step 1: Add `requireAdmin` to `src/lib/attempt-auth.ts`**
 
 There are ~50 copies of this check today, each returning 401 where 403 is meant.
 Add the helper; do not retrofit the existing 50 (Part 12 decides how far to go).
@@ -85,7 +85,7 @@ export async function requireAdmin(): Promise<AdminContext> {
 }
 ```
 
-- [ ] **Step 2: Write `src/lib/proctoring/http.ts`**
+- [x] **Step 2: Write `src/lib/proctoring/http.ts`**
 
 ```ts
 import type { ZodSchema } from 'zod'
@@ -113,7 +113,7 @@ export async function parseBody<T>(req: Request, schema: ZodSchema<T>): Promise<
 }
 ```
 
-- [ ] **Step 3: Write `src/lib/proctoring/schemas.ts`**
+- [x] **Step 3: Write `src/lib/proctoring/schemas.ts`**
 
 ```ts
 import { z } from 'zod'
@@ -151,7 +151,7 @@ export const finalizeSchema = z.object({
 })
 ```
 
-- [ ] **Step 4: Write `src/lib/proctoring/session.ts`**
+- [x] **Step 4: Write `src/lib/proctoring/session.ts`**
 
 The key design point: `resolveOwnedAttempt` is the **only** place the dual
 attempt tables are handled. Every route above it works with `ResolvedAttempt`.
@@ -289,8 +289,12 @@ export async function startSession(a: ResolvedAttempt): Promise<SessionView> {
     // reads the winner rather than failing the candidate.
     if ((err as { code?: string }).code !== 'P2002') throw err
     const winner = await activeSessionFor(a)
-    if (!winner) throw err
-    return winner
+    if (winner) return winner
+    // No live session, yet the FK is taken: this attempt's session was already
+    // closed. The unique index is per attempt, not per attempt-and-status, so a
+    // finished attempt can never be re-proctored. Say so as a 409 rather than
+    // letting a raw Prisma error surface as a generic 500.
+    throw new HttpError(409, 'PROCTORING_SESSION_CLOSED')
   }
 }
 
@@ -332,7 +336,7 @@ export async function finalizeSession(
 }
 ```
 
-- [ ] **Step 5: Write the session route** — `src/app/api/student/proctoring/session/route.ts`
+- [x] **Step 5: Write the session route** — `src/app/api/student/proctoring/session/route.ts`
 
 ```ts
 import { NextRequest, NextResponse } from 'next/server'
@@ -400,7 +404,7 @@ export async function GET(req: NextRequest) {
 }
 ```
 
-- [ ] **Step 6: Write the heartbeat route** — `src/app/api/student/proctoring/heartbeat/route.ts`
+- [x] **Step 6: Write the heartbeat route** — `src/app/api/student/proctoring/heartbeat/route.ts`
 
 ```ts
 import { NextRequest, NextResponse } from 'next/server'
@@ -436,7 +440,7 @@ export async function POST(req: NextRequest) {
 }
 ```
 
-- [ ] **Step 7: Write the finalize route** — `src/app/api/student/proctoring/finalize/route.ts`
+- [x] **Step 7: Write the finalize route** — `src/app/api/student/proctoring/finalize/route.ts`
 
 ```ts
 import { NextRequest, NextResponse } from 'next/server'
@@ -462,7 +466,7 @@ export async function POST(req: NextRequest) {
 }
 ```
 
-- [ ] **Step 8: Add the gate to both `/start` routes**
+- [x] **Step 8: Add the gate to both `/start` routes**
 
 This is the step that makes proctoring non-bypassable. In
 `src/app/api/student/test/[scheduleId]/start/route.ts`, **before** the
@@ -491,7 +495,7 @@ substituting `test.proctoringEnabled` and `walkInAttemptId`.
 
 **Both files. A change to one that misses the other is incomplete.**
 
-- [ ] **Step 9: Expose `proctoringEnabled` on the two GET routes**
+- [x] **Step 9: Expose `proctoringEnabled` on the two GET routes**
 
 The GET already returns the whole `schedule` (including `test`), so the flag
 reaches the client for free — confirm it does, and add an explicit top-level
@@ -505,7 +509,7 @@ Add to **both** the `started: false` response and the `started: true` response i
 `src/app/api/student/test/[scheduleId]/route.ts`, and the equivalents in the
 walk-in route.
 
-- [ ] **Step 10: Write `tests/proctoring-session-api.test.ts`**
+- [x] **Step 10: Write `tests/proctoring-session-api.test.ts`**
 
 Test the service layer directly, the way `tests/attempt-ownership.test.ts` does —
 this repo tests routes by exercising their lib helpers, not over HTTP.
@@ -529,6 +533,8 @@ startSession
 finalizeSession
   - marks COMPLETED, sets endedAt, zeroes the reservation
   - is idempotent: a second call changes nothing
+  - a restart after finalize is refused with 409 PROCTORING_SESSION_CLOSED,
+    not a raw Prisma P2002 rendered as a 500
 
 recordHeartbeat
   - advances lastHeartbeatAt
@@ -539,13 +545,13 @@ recordHeartbeat
 Follow the existing fixture conventions: `TAG = \`...-${Date.now()}\``, teardown
 in FK-safe order in `afterAll`, ending with `prisma.$disconnect()`.
 
-- [ ] **Step 11: Run it**
+- [x] **Step 11: Run it**
 
 ```bash
 npx vitest run tests/proctoring-session-api.test.ts
 ```
 
-- [ ] **Step 12: Typecheck and full suite**
+- [x] **Step 12: Typecheck and full suite**
 
 ```bash
 npx tsc --noEmit -p tsconfig.json
@@ -559,7 +565,7 @@ The existing `tests/attempt-ownership.test.ts` must still pass — the `/start`
 routes changed, so a regression there is the signal that the gate broke
 non-proctored flows.
 
-- [ ] **Step 13: Confirm non-proctored attempts are untouched**
+- [x] **Step 13: Confirm non-proctored attempts are untouched**
 
 ```bash
 grep -n "proctoringEnabled" src/app/api/student/test/\[scheduleId\]/start/route.ts src/app/api/student/walkin-test/\[testId\]/start/route.ts
@@ -568,7 +574,7 @@ grep -n "proctoringEnabled" src/app/api/student/test/\[scheduleId\]/start/route.
 Every proctoring branch must sit behind that flag. A test with
 `proctoringEnabled: false` must take exactly the path it took before this part.
 
-- [ ] **Step 14: Commit**
+- [x] **Step 14: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 4: session lifecycle API and the start gate"
@@ -576,7 +582,7 @@ git add -A && git commit -m "proctoring part 4: session lifecycle API and the st
 
 Do not push.
 
-- [ ] **Step 15: Update `PROGRESS.md`.**
+- [x] **Step 15: Update `PROGRESS.md`.**
 
 ---
 

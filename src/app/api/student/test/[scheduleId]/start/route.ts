@@ -68,6 +68,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ scheduleId
       }
     }
 
+    // A modified client could skip the proctoring calls entirely and come
+    // straight here. Refuse to start the clock unless a live session exists, so
+    // the server-side record is trustworthy even when the browser is not.
+    if (schedule.test.proctoringEnabled) {
+      const live = await prisma.proctoringSession.findFirst({
+        where: { testAttemptId: attempt.id, status: { in: ['ACTIVE', 'DEGRADED'] } },
+        select: { id: true },
+      })
+      if (!live) {
+        return NextResponse.json(
+          { error: 'Proctoring must be started before this assessment.', code: 'PROCTORING_REQUIRED' },
+          { status: 409 }
+        )
+      }
+    }
+
     // Start the clock once, on first start. Resuming must not extend the deadline.
     if (!attempt.startedAt) {
       const startedAt = new Date()

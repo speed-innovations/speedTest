@@ -62,6 +62,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ testId: str
     if (!attempt.startedAt) {
       return NextResponse.json({
         test: testPayload,
+        // testPayload deliberately does not carry the whole Test row, so the
+        // flag is lifted out explicitly rather than riding along.
+        proctoringEnabled: test.proctoringEnabled,
         started: false,
         isSubmitted: false,
         questionCount: assigned.length,
@@ -88,6 +91,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ testId: str
 
     return NextResponse.json({
       test: testPayload,
+      proctoringEnabled: test.proctoringEnabled,
       started: true,
       isSubmitted: false,
       questions: orderedQuestions,

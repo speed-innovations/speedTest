@@ -77,6 +77,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ scheduleId:
     if (!attempt.startedAt) {
       return NextResponse.json({
         schedule,
+        // Lifted out of the nested schedule.test so the client reads one
+        // top-level flag rather than digging through the payload.
+        proctoringEnabled: schedule.test.proctoringEnabled,
         started: false,
         isSubmitted: false,
         questionCount: assigned.length,
@@ -103,6 +106,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ scheduleId:
 
     return NextResponse.json({
       schedule,
+      proctoringEnabled: schedule.test.proctoringEnabled,
       started: true,
       isSubmitted: false,
       questions: orderedQuestions,

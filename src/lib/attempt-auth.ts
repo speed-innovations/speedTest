@@ -59,6 +59,30 @@ export async function requireStudent(): Promise<StudentContext> {
   }
 }
 
+export interface AdminContext {
+  userId: string
+  email: string
+}
+
+/**
+ * Resolve the signed-in APP_ADMIN.
+ *
+ * 403 when authenticated but not an admin, 401 only when not signed in - the
+ * ~50 copy-pasted inline checks elsewhere conflate the two and always say 401.
+ * New routes use this; the existing copies are left alone deliberately.
+ */
+export async function requireAdmin(): Promise<AdminContext> {
+  const session = await getServerSession(authOptions)
+  if (!session?.user?.email) throw new HttpError(401, 'Unauthorized')
+  if ((session.user as any).role !== 'APP_ADMIN') throw new HttpError(403, 'Forbidden')
+  const user = await prisma.user.findUnique({
+    where: { email: session.user.email },
+    select: { id: true, email: true, isActive: true },
+  })
+  if (!user || !user.isActive) throw new HttpError(401, 'Unauthorized')
+  return { userId: user.id, email: user.email }
+}
+
 function assertAttemptId(attemptId: unknown): string {
   if (typeof attemptId !== 'string' || attemptId.length === 0) {
     throw new HttpError(400, 'Missing attemptId')
