@@ -58,7 +58,7 @@ eliminate it.
 
 ## Steps
 
-- [ ] **Step 1: Write `src/lib/proctoring/rate-limit.ts`**
+- [x] **Step 1: Write `src/lib/proctoring/rate-limit.ts`**
 
 ```ts
 /**
@@ -97,19 +97,30 @@ export function rateLimit(key: string, limit: number, windowMs: number, now = Da
   return true
 }
 
+/**
+ * Written with forEach rather than for...of or spread: tsconfig targets es5,
+ * where iterating a Map directly needs downlevelIteration. Changing the
+ * project's target for one helper is not worth it.
+ */
 function evictExpired(now: number): void {
-  for (const [k, w] of windows) if (now >= w.resetAt) windows.delete(k)
-  // Still full of live windows: drop the oldest rather than grow without bound.
+  const expired: string[] = []
+  windows.forEach((w, k) => { if (now >= w.resetAt) expired.push(k) })
+  expired.forEach(k => windows.delete(k))
+
+  // Still full of live windows: drop the oldest half rather than grow without bound.
   if (windows.size >= MAX_KEYS) {
-    const oldest = [...windows.entries()].sort((a, b) => a[1].resetAt - b[1].resetAt).slice(0, MAX_KEYS / 2)
-    for (const [k] of oldest) windows.delete(k)
+    const live: Array<{ key: string; resetAt: number }> = []
+    windows.forEach((w, k) => live.push({ key: k, resetAt: w.resetAt }))
+    live.sort((a, b) => a.resetAt - b.resetAt)
+      .slice(0, Math.floor(MAX_KEYS / 2))
+      .forEach(e => windows.delete(e.key))
   }
 }
 
 export function resetRateLimitsForTests(): void { windows.clear() }
 ```
 
-- [ ] **Step 2: Write `tests/proctoring-rate-limit.test.ts`**
+- [x] **Step 2: Write `tests/proctoring-rate-limit.test.ts`**
 
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest'
@@ -137,7 +148,7 @@ describe('rateLimit', () => {
 })
 ```
 
-- [ ] **Step 3: Extend `src/lib/proctoring/schemas.ts`**
+- [x] **Step 3: Extend `src/lib/proctoring/schemas.ts`**
 
 ```ts
 export const assetTypeSchema = z.enum(['WEBCAM_SEGMENT', 'SCREENSHOT'])
@@ -166,7 +177,7 @@ export const assetCompleteSchema = z.object({
 })
 ```
 
-- [ ] **Step 4: Write `src/lib/proctoring/upload.ts`**
+- [x] **Step 4: Write `src/lib/proctoring/upload.ts`**
 
 ```ts
 import { prisma } from '@/lib/db'
@@ -358,7 +369,7 @@ export async function issueDownloadUrl(assetId: string): Promise<string> {
 }
 ```
 
-- [ ] **Step 5: Write the upload-url route**
+- [x] **Step 5: Write the upload-url route**
 
 `src/app/api/student/proctoring/upload-url/route.ts`:
 
@@ -416,7 +427,7 @@ export async function POST(req: NextRequest) {
 Note the response does **not** include `objectKey`. The client has no use for it
 and exposing the key surface serves no purpose.
 
-- [ ] **Step 6: Write the asset-complete route**
+- [x] **Step 6: Write the asset-complete route**
 
 `src/app/api/student/proctoring/asset-complete/route.ts` — same skeleton:
 `requireStudent` → rate limit → `parseBody(assetCompleteSchema)` →
@@ -424,7 +435,7 @@ and exposing the key surface serves no purpose.
 → `NextResponse.json({ ok: true, byteSize, status })`, all inside the
 `errorResponse` funnel.
 
-- [ ] **Step 7: Write the admin download-url route**
+- [x] **Step 7: Write the admin download-url route**
 
 `src/app/api/admin/proctoring/assets/[id]/download-url/route.ts`:
 
@@ -449,7 +460,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 }
 ```
 
-- [ ] **Step 8: Write `tests/proctoring-upload-api.test.ts`**
+- [x] **Step 8: Write `tests/proctoring-upload-api.test.ts`**
 
 Against `MockStorage`. Cover:
 
@@ -485,13 +496,13 @@ it('records the size storage reports, not the one a client might claim', async (
 })
 ```
 
-- [ ] **Step 9: Run the tests**
+- [x] **Step 9: Run the tests**
 
 ```bash
 npx vitest run tests/proctoring-upload-api.test.ts tests/proctoring-rate-limit.test.ts
 ```
 
-- [ ] **Step 10: Typecheck and full suite**
+- [x] **Step 10: Typecheck and full suite**
 
 ```bash
 npx tsc --noEmit -p tsconfig.json
@@ -501,7 +512,7 @@ npx tsc --noEmit -p tsconfig.json
 npm test
 ```
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 5: presigned upload and download APIs with size enforcement"
@@ -509,7 +520,7 @@ git add -A && git commit -m "proctoring part 5: presigned upload and download AP
 
 Do not push.
 
-- [ ] **Step 12: Update `PROGRESS.md`.**
+- [x] **Step 12: Update `PROGRESS.md`.**
 
 ---
 
