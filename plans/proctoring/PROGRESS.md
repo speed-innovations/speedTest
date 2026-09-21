@@ -23,7 +23,7 @@ Branch: `feat/proctoring`
 | 5 | Upload APIs | ✅ DONE | 1e7e20d | 2026-09-21 |
 | 6 | Events API | ✅ DONE | 8289cc9 | 2026-09-21 |
 | 7 | Client core services | ✅ DONE | 0114b9b | 2026-09-21 |
-| 8 | Gaze detection | ⬜ NOT STARTED | — | — |
+| 8 | Gaze detection | ✅ DONE | f45e1bc | 2026-09-21 |
 | 9 | Candidate UI | ⬜ NOT STARTED | — | — |
 | 10 | Admin review UI | ⬜ NOT STARTED | — | — |
 | 11 | Retention and cleanup | ⬜ NOT STARTED | — | — |
@@ -313,5 +313,55 @@ Both "Done when" greps pass: no `MediaRecorder` anywhere in `screen-capture.ts`
 
 Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
 199 passed across 19 files. `scripts/tsconfig.json` not run — no scripts
+touched.
+
+
+### Part 8 — 2026-09-21
+
+Commit `f45e1bc`, local, not pushed.
+
+**The vendored assets are ~26 MB, not the ~6 MB the part file assumed.** The
+model is 3.6 MB as expected, but `@mediapipe/tasks-vision`'s `wasm/` directory
+is ~34 MB. I copied only the single-threaded builds (SIMD + no-SIMD, 23 MB) and
+skipped `vision_wasm_module_internal.*` — that is the threaded build, it needs
+`SharedArrayBuffer`, and the part file itself forbids adding the COOP/COEP
+headers that would make it loadable. Copying it would have added 12 MB that can
+never execute. Part file updated with the real figures and the reason.
+
+The repo is now meaningfully larger, and that is a deliberate trade the plan
+already made: a CDN fetch that fails mid-assessment breaks proctoring after the
+candidate has granted permissions and started the clock.
+
+Smaller notes:
+
+- The part file's no-network grep is a **false positive** as written: a bare
+  `fetch` match flags `gaze-monitor.ts`'s own comment explaining *why* the model
+  is self-hosted rather than CDN-fetched. Tightened to match call sites
+  (`fetch(`, `sendBeacon(`, `new XMLHttpRequest`); it now passes honestly. There
+  are no network calls in any gaze module.
+- `node -e "require('@mediapipe/tasks-vision/package.json')"` fails with
+  `ERR_PACKAGE_PATH_NOT_EXPORTED` — the package does not export its manifest.
+  Read the version from `package.json` in the repo instead. It resolved to
+  `^1.0.1`.
+- The iris gain in `classifyGaze` is derived from the thresholds
+  (`yawDeg / irisRatio`) rather than tuned as a separate constant, so an iris
+  pushed fully to `irisRatio` contributes exactly one yaw threshold. That keeps
+  the two from drifting apart, and it is what makes "head centred, eyes hard
+  over" detectable at all.
+- Added cases beyond the part file's list: a non-finite signal classifies as
+  `UNCERTAIN` rather than CENTER (a degenerate matrix would otherwise silently
+  disable detection), cooldowns are independent per warning type, switching
+  direction restarts the sustained timer, and `reset()` clears cooldowns too.
+- Baseline uses the **median** of its samples, not the mean: one frame of the
+  candidate glancing away during calibration would drag a mean and skew the
+  whole session.
+
+**Not verified, and must not be claimed: that real faces classify correctly.**
+Synthetic signals prove the logic, not the model, and the yaw/pitch sign
+convention in `extractSignals` can only be confirmed against a real camera.
+Part 14's manual test is where looking left actually has to produce LEFT.
+
+Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
+226 passed across 21 files. `scripts/tsconfig.json` not run — no scripts
 touched.
 
