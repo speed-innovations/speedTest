@@ -18,7 +18,7 @@ Branch: `feat/proctoring`
 | 0 | Plan infrastructure | ✅ DONE | c9b9f1c | 2026-09-21 |
 | 1 | Schema, migration, config | ✅ DONE | 5a3265a | 2026-09-21 |
 | 2 | Storage abstraction | ✅ DONE | 908fa30 | 2026-09-21 |
-| 3 | Quota and reservation | ⬜ NOT STARTED | — | — |
+| 3 | Quota and reservation | ✅ DONE | ed5c3dd | 2026-09-21 |
 | 4 | Session lifecycle API | ⬜ NOT STARTED | — | — |
 | 5 | Upload APIs | ⬜ NOT STARTED | — | — |
 | 6 | Events API | ⬜ NOT STARTED | — | — |
@@ -134,4 +134,37 @@ presigned URLs. That needs real credentials and a browser PUT — Part 14.
 
 Verification: `npx tsc --noEmit -p tsconfig.json` clean; `npm test` 100 passed
 across 9 files. `scripts/tsconfig.json` not run — no scripts touched.
+
+### Part 3 — 2026-09-21
+
+Commit `ed5c3dd`, local, not pushed.
+
+**The Step 1 SUM result, recorded as required — Part 10's usage page depends on
+it.** Prisma's pg driver adapter surfaces `SUM(int)` past 2^31 as a **plain JS
+number**, not a bigint and not a string: a four-row fixture at 2 GB each
+aggregated to exactly `8000000000`, `typeof` `number`, and
+`Number.isSafeInteger` true. **No raw-query cast is needed** — the fallback
+`$queryRaw ... ::double precision` in the part file stays unused. The `Number()`
+calls in `currentUsageBytes()` are there for the null-when-no-rows case only,
+not for a bigint conversion.
+
+Two corrections made to the part file itself, because its listed code would not
+have compiled:
+
+- `RESERVING` was `['PENDING','ACTIVE','DEGRADED'] as const` and then passed as
+  `RESERVING as unknown as string[]`. Prisma's `in` filter takes
+  `ProctoringSessionStatus[]`, which a `string[]` does not satisfy. It is now
+  typed as the generated enum and the casts are gone. `sweepStaleReservations`
+  also had the same three statuses inlined a second time; it now reuses the
+  constant, so the two can no longer drift apart.
+- `canStartProctoredAssessment` used a dynamic `await import('./config')` to
+  reach `getR2Config`. Nothing requires that — `config.ts` is already imported
+  at the top of the module — so it is a plain top-level import now.
+
+The math matched the PRD's worked example first try: 60 minutes reserves exactly
+111,000,000 bytes (86.4 MB media + 61 screenshots, x1.2).
+
+Verification: `npx tsc --noEmit -p tsconfig.json` clean; `npm test` 114 passed
+across 11 files. `scripts/tsconfig.json` not run — no scripts touched. The DB
+tests wrote to local Postgres only.
 
