@@ -45,7 +45,7 @@ this evidence actively misleading.
 
 ## Steps
 
-- [ ] **Step 1: Write the evidence endpoint** — `src/app/api/admin/proctoring/[attemptId]/route.ts`
+- [x] **Step 1: Write the evidence endpoint** — `src/app/api/admin/proctoring/[attemptId]/route.ts`
 
 `requireAdmin()` → read `type` from the query → find the session by
 `testAttemptId` or `walkInAttemptId` → return session metadata, assets (id, type,
@@ -62,7 +62,7 @@ Rules:
 - Return `null` session cleanly when the attempt was never proctored — the panel
   renders "not proctored", which is not an error.
 
-- [ ] **Step 2: Write the usage endpoint** — `src/app/api/admin/proctoring/usage/route.ts`
+- [x] **Step 2: Write the usage endpoint** — `src/app/api/admin/proctoring/usage/route.ts`
 
 ```ts
 /**
@@ -86,7 +86,7 @@ Return: `reservedBytes`, `storedBytes`, `totalBytes`, `safetyBytes`,
   estimatedAttemptsRemaining: Math.floor(remainingBytes / estimateAttemptBytes(60)),
 ```
 
-- [ ] **Step 3: Write `RecordingPlayer.tsx`**
+- [x] **Step 3: Write `RecordingPlayer.tsx`**
 
 A playlist over segments, not a merged file — there is no transcoding here and
 none is wanted.
@@ -99,7 +99,7 @@ none is wanted.
   and playback skips to the next one rather than stalling
 ```
 
-- [ ] **Step 4: Write `ScreenshotGallery.tsx`**
+- [x] **Step 4: Write `ScreenshotGallery.tsx`**
 
 ```
 - chronological, showing timestamp, elapsed time, and question number when known
@@ -110,7 +110,7 @@ none is wanted.
   which is a normal outcome after 72 hours, not a failure
 ```
 
-- [ ] **Step 5: Write `EventTimeline.tsx`**
+- [x] **Step 5: Write `EventTimeline.tsx`**
 
 Ordered by `elapsedMs` so events line up with segments and screenshots.
 Neutral phrasing:
@@ -125,7 +125,7 @@ Neutral phrasing:
 No severity ranking, no totals framed as a score. A count of gaze warnings is
 fine; "risk: HIGH" is not.
 
-- [ ] **Step 6: Write `ProctoringPanel.tsx` and mount it**
+- [x] **Step 6: Write `ProctoringPanel.tsx` and mount it**
 
 In `src/app/admin/results/page.tsx`, the detail modal currently renders a
 one-line violations strip around lines 228–235. Mount the panel directly beneath
@@ -136,7 +136,7 @@ Keep the existing violations strip. Tab-switch violations and proctoring events
 are different signals from different mechanisms; merging them would misrepresent
 both.
 
-- [ ] **Step 7: Write the usage page and nav entry**
+- [x] **Step 7: Write the usage page and nav entry**
 
 `src/app/admin/proctoring/page.tsx`, plus an entry in `AdminSidebar.tsx`'s
 `navItems`. Lead with remaining capacity and `estimatedAttemptsRemaining` — that
@@ -145,7 +145,7 @@ is the number that decides whether tomorrow's drive can run.
 Show `assetsAwaitingCleanup` prominently. If the scheduled job stalls, this is
 the only place it becomes visible before the budget is quietly eaten.
 
-- [ ] **Step 8: Write `tests/proctoring-admin-api.test.ts`**
+- [x] **Step 8: Write `tests/proctoring-admin-api.test.ts`**
 
 ```
 - an admin gets the evidence for an attempt of either kind
@@ -170,7 +170,7 @@ it('never leaks the object key or a signed URL', async () => {
 })
 ```
 
-- [ ] **Step 9: Run the tests, typecheck, full suite, build**
+- [x] **Step 9: Run the tests, typecheck, full suite, build**
 
 ```bash
 npx vitest run tests/proctoring-admin-api.test.ts
@@ -191,6 +191,45 @@ Do not push.
 - [ ] **Step 11: Update `PROGRESS.md`.**
 
 ---
+
+## Found while building this part
+
+- **The logic lives in `src/lib/proctoring/admin.ts`**, which the file list did
+  not mention. The part file's own test snippet calls
+  `getAdminEvidence(attemptId, 'scheduled')`, and the leak checks have to run
+  against the real serialized shape, so the read models sit in a lib the tests
+  import directly. The routes are thin Convention B wrappers.
+
+- **The download-url route already existed** from Part 5 at
+  `src/app/api/admin/proctoring/assets/[id]/download-url/route.ts`. Nothing new
+  was needed; both the player and the gallery call it.
+
+- **Prisma orders enum columns by DECLARATION order, not alphabetically.**
+  `orderBy: { type: 'asc' }` yields `WEBCAM_SEGMENT` then `SCREENSHOT`, because
+  that is their order in `schema.prisma`. Pinned by a test - inserting a new
+  asset type above `WEBCAM_SEGMENT` would silently reorder the response.
+
+- **`PROCTORING_STORAGE_SAFETY_BYTES` has a 100 MB config floor**, so the
+  over-budget case cannot be produced by lowering the budget beneath the
+  fixtures. That test creates a session holding a 2 GB reservation instead, and
+  removes it in a `finally`.
+
+- **Top-level `await` is illegal at this project's `es5` target** (TS1378). The
+  test uses static imports; `vi.mock` is hoisted above them by vitest, so the
+  dynamic-import dance some mocking guides suggest is both unnecessary and
+  uncompilable here. Worth remembering for Parts 11-13.
+
+- **Usage arithmetic is asserted as an invariant, not against fixed numbers.**
+  Other suites write sessions and assets into the same tables and vitest may run
+  them concurrently, so absolute totals are not one file's to control - the same
+  hazard Part 4 recorded.
+
+- **`npm run build` cannot run while the dev server is up.** `prisma generate`
+  fails `EPERM` on the query engine DLL (documented in CLAUDE.md), and even
+  `next build` alone can fail in "Collecting page data" with a spurious
+  `MODULE_NOT_FOUND` for a webpack chunk, because the dev server rewrites the
+  shared `.next` directory mid-build. Retrying succeeded. Do not read that
+  failure as a code defect.
 
 ## Done when
 
