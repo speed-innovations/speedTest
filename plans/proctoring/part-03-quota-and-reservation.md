@@ -50,7 +50,7 @@ attempts whose storage is already spoken for.
 
 ## Steps
 
-- [ ] **Step 1: Settle the `SUM` question first — it is the one real unknown**
+- [x] **Step 1: Settle the `SUM` question first — it is the one real unknown**
 
 Byte columns are `Int` (see Part 1). The **sum** across sessions can exceed 2^31
 (the budget is 7e9). Postgres `SUM(integer)` returns `bigint`, and how Prisma's
@@ -152,7 +152,7 @@ const [row] = await prisma.$queryRaw<Array<{ reserved: number }>>`
   FROM "ProctoringSession" WHERE "status" IN ('PENDING','ACTIVE','DEGRADED')`
 ```
 
-- [ ] **Step 2: Write the pure math test** — `tests/proctoring-quota-math.test.ts`
+- [x] **Step 2: Write the pure math test** — `tests/proctoring-quota-math.test.ts`
 
 ```ts
 import { describe, it, expect } from 'vitest'
@@ -213,11 +213,12 @@ describe('effectiveDurationMinutes', () => {
 })
 ```
 
-- [ ] **Step 3: Write `src/lib/proctoring/quota.ts`**
+- [x] **Step 3: Write `src/lib/proctoring/quota.ts`**
 
 ```ts
+import type { ProctoringSessionStatus } from '@prisma/client'
 import { prisma } from '@/lib/db'
-import { getProctoringConfig, type ProctoringConfig } from './config'
+import { getProctoringConfig, getR2Config } from './config'
 import type { StartEligibility } from './types'
 
 /**
@@ -229,8 +230,14 @@ import type { StartEligibility } from './types'
  * storage is already spoken for by the last three days of completed ones.
  */
 
-/** Statuses that still hold an outstanding reservation. */
-const RESERVING = ['PENDING', 'ACTIVE', 'DEGRADED'] as const
+/**
+ * Statuses that still hold an outstanding reservation.
+ *
+ * Typed as the generated Prisma enum, not `as const` plus a cast to string[]:
+ * Prisma's `in` filter takes ProctoringSessionStatus[], and a string[] does not
+ * satisfy it. The cast would not have compiled.
+ */
+const RESERVING: ProctoringSessionStatus[] = ['PENDING', 'ACTIVE', 'DEGRADED']
 
 /** Clamp the test's duration to the configured hard maximum. */
 export function effectiveDurationMinutes(testDurationMinutes: number, cfg = getProctoringConfig()): number {
@@ -276,7 +283,7 @@ export async function currentUsageBytes(): Promise<UsageLedger> {
 
   const [reservedAgg, storedAgg, activeSessions] = await Promise.all([
     prisma.proctoringSession.aggregate({
-      where: { status: { in: RESERVING as unknown as string[] } },
+      where: { status: { in: RESERVING } },
       _sum: { storageReservedBytes: true },
     }),
     // Uploaded and not yet expired. EXPIRED/DELETED assets no longer count even
@@ -285,7 +292,7 @@ export async function currentUsageBytes(): Promise<UsageLedger> {
       where: { status: 'UPLOADED', expiresAt: { gt: now } },
       _sum: { byteSize: true },
     }),
-    prisma.proctoringSession.count({ where: { status: { in: RESERVING as unknown as string[] } } }),
+    prisma.proctoringSession.count({ where: { status: { in: RESERVING } } }),
   ])
 
   const reservedBytes = Number(reservedAgg._sum.storageReservedBytes ?? 0)
@@ -318,7 +325,6 @@ export async function canStartProctoredAssessment(testDurationMinutes: number): 
     // Fail here rather than at the first upload, when the candidate is already
     // recording and the evidence has nowhere to go.
     try {
-      const { getR2Config } = await import('./config')
       getR2Config()
     } catch {
       return deny('PROCTORING_STORAGE_NOT_CONFIGURED')
@@ -368,7 +374,7 @@ export async function sweepStaleReservations(now = new Date()): Promise<number> 
 
   const stale = await prisma.proctoringSession.findMany({
     where: {
-      status: { in: ['PENDING', 'ACTIVE', 'DEGRADED'] },
+      status: { in: RESERVING },
       OR: [
         { lastHeartbeatAt: { lt: cutoff } },
         { lastHeartbeatAt: null, createdAt: { lt: cutoff } },
@@ -389,7 +395,7 @@ export async function sweepStaleReservations(now = new Date()): Promise<number> 
 }
 ```
 
-- [ ] **Step 4: Run the math test — expect pass**
+- [x] **Step 4: Run the math test — expect pass**
 
 ```bash
 npx vitest run tests/proctoring-quota-math.test.ts
@@ -402,7 +408,7 @@ starts, then one per interval.
 If this fails, work out which side is wrong before editing either. Changing the
 expected number to match whatever the code produced is how a wrong budget ships.
 
-- [ ] **Step 5: Extend the DB test with the ledger and sweep cases**
+- [x] **Step 5: Extend the DB test with the ledger and sweep cases**
 
 Append to `tests/proctoring-quota-db.test.ts`:
 
@@ -472,7 +478,7 @@ describe('sweepStaleReservations', () => {
 })
 ```
 
-- [ ] **Step 6: Run the DB tests**
+- [x] **Step 6: Run the DB tests**
 
 ```bash
 npx vitest run tests/proctoring-quota-db.test.ts
@@ -480,7 +486,7 @@ npx vitest run tests/proctoring-quota-db.test.ts
 
 These write real rows. Confirm `DATABASE_URL` points at **local** Postgres first.
 
-- [ ] **Step 7: Typecheck and full suite**
+- [x] **Step 7: Typecheck and full suite**
 
 ```bash
 npx tsc --noEmit -p tsconfig.json
@@ -490,7 +496,7 @@ npx tsc --noEmit -p tsconfig.json
 npm test
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 3: storage quota, reservation, and stale sweep"
@@ -498,7 +504,7 @@ git add -A && git commit -m "proctoring part 3: storage quota, reservation, and 
 
 Do not push.
 
-- [ ] **Step 9: Update `PROGRESS.md`** — and record the Step 1 `SUM` result
+- [x] **Step 9: Update `PROGRESS.md`** — and record the Step 1 `SUM` result
       explicitly, whichever way it went. Part 10's usage page depends on it.
 
 ---
