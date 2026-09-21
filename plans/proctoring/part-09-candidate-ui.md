@@ -40,7 +40,7 @@ submitting will not trust anything else the product says.
 
 ## Steps
 
-- [ ] **Step 1: Write `use-proctoring.ts`**
+- [x] **Step 1: Write `use-proctoring.ts`**
 
 ```ts
 export interface UseProctoringOptions {
@@ -69,6 +69,24 @@ export interface UseProctoringResult {
 }
 ```
 
+**Deviations from the interface as written above, all additive:**
+
+- `startError: { message, code? } | null` added. `ProctoringSetup` cannot
+  otherwise tell a 503 storage refusal from any other start failure, and
+  `ProctoringRecovery` needs the `PROCTORING_SESSION_CLOSED` code to stop
+  offering a button that can only fail again.
+- `capture: CaptureState` added (`recording`, `screenSharing`, `cameraLive`,
+  `micLive`). The heartbeat already tracks this internally and the status
+  indicator must not infer "recording" from the state name.
+- `DeviceStatus` was referenced but never defined; it is
+  `{ state: 'IDLE' | 'CHECKING' | 'READY' | 'DENIED' | 'FAILED' | 'NOT_REQUIRED'; message?: string }`.
+- **`needsRecovery` is NOT `state !== 'ACTIVE'`.** That formula is right on
+  load and wrong a moment later: a candidate who stops screen sharing mid-exam
+  leaves ACTIVE, and the exam would be replaced by the recovery screen with
+  their questions gone. It is `enabled && alreadyStarted && !captureLive`,
+  where `captureLive` records whether this page instance ever brought capture
+  up. A mid-exam screen stop shows a resume banner instead.
+
 Rules for the implementation:
 
 - Long-lived handles (`MediaStream`, `MediaRecorder`, `GazeMonitor`,
@@ -88,7 +106,7 @@ Rules for the implementation:
   }, [])
 ```
 
-- [ ] **Step 2: Write `ProctoringSetup.tsx`**
+- [x] **Step 2: Write `ProctoringSetup.tsx`**
 
 Three rows — Camera, Microphone, Screen sharing — each showing
 `Checking… / Ready / Failed / Permission denied`. Status must not be colour-only:
@@ -115,14 +133,14 @@ Requirements:
   and no internal reason. This path will be hit in normal operation at the
   configured budget, so it must not look like a crash.
 
-- [ ] **Step 3: Write `ProctoringStatusIndicator.tsx`**
+- [x] **Step 3: Write `ProctoringStatusIndicator.tsx`**
 
 Small, non-intrusive, in the exam top bar next to the existing violation chip:
 `● Recording`, `● Screen sharing`, `● Evidence saved`. Distinguish **Recorded /
 Uploaded / Pending upload / Upload failed** honestly — never show "saved" for
 something still queued.
 
-- [ ] **Step 4: Write `ProctoringWarning.tsx`**
+- [x] **Step 4: Write `ProctoringWarning.tsx`**
 
 Transient banner with `role="status"` and `aria-live="polite"`, so a screen
 reader announces it without stealing focus mid-question. The PRD's messages:
@@ -137,14 +155,14 @@ Upload trouble  We're having trouble saving assessment evidence. Please check yo
 Never blocks interaction. A warning is evidence for review, not a punishment, and
 a candidate must always be able to keep answering.
 
-- [ ] **Step 5: Write `ProctoringRecovery.tsx`**
+- [x] **Step 5: Write `ProctoringRecovery.tsx`**
 
 Shown when `needsRecovery` is true. Explains that the assessment is still in
 progress, that permissions must be granted again after a refresh, and offers one
 button to resume. It must **not** create a second attempt or a second session —
 it calls the same session endpoint, which is idempotent by design.
 
-- [ ] **Step 6: Wire into `src/app/student/test/[scheduleId]/page.tsx`**
+- [x] **Step 6: Wire into `src/app/student/test/[scheduleId]/page.tsx`**
 
 Read `data.proctoringEnabled` in the load effect. Then, in order:
 
@@ -181,7 +199,7 @@ Read `data.proctoringEnabled` in the load effect. Then, in order:
       try { await finalize() } catch { /* logged inside finalize */ }
 ```
 
-- [ ] **Step 7: Mirror every one of those five changes into
+- [x] **Step 7: Mirror every one of those five changes into
       `src/app/student/walkin-test/[testId]/page.tsx`**
 
 Differences only: `kind="walkin"`, `parentId={testId}`, and the API base path.
@@ -195,7 +213,7 @@ grep -c "useProctoring\|ProctoringSetup\|ProctoringRecovery\|needsRecovery" \
 
 The two counts must match.
 
-- [ ] **Step 8: Write the jsdom tests**
+- [x] **Step 8: Write the jsdom tests**
 
 `tests/proctoring-setup.test.tsx` — mock `navigator.mediaDevices.getUserMedia`,
 `getDisplayMedia`, `MediaRecorder`, `MediaStream`, `MediaStreamTrack`, and
@@ -235,13 +253,13 @@ it('does nothing whatsoever when proctoring is disabled', () => {
 })
 ```
 
-- [ ] **Step 9: Run the tests**
+- [x] **Step 9: Run the tests**
 
 ```bash
 npx vitest run tests/proctoring-setup.test.tsx tests/proctoring-use-proctoring.test.tsx
 ```
 
-- [ ] **Step 10: Typecheck, full suite, and build**
+- [x] **Step 10: Typecheck, full suite, and build**
 
 ```bash
 npx tsc --noEmit -p tsconfig.json
@@ -258,13 +276,23 @@ npm run build
 The build matters here: this is the first part putting proctoring code into a
 client bundle.
 
-- [ ] **Step 11: Confirm no credential reached the bundle**
+- [x] **Step 11: Confirm no credential reached the bundle**
 
 ```bash
 grep -rl "R2_SECRET_ACCESS_KEY\|R2_ACCESS_KEY_ID" .next/static 2>/dev/null && echo "FAIL: credential in client bundle" || echo "OK: no R2 credentials in client bundle"
 ```
 
-- [ ] **Step 12: Manual smoke test**
+- [ ] **Step 12: Manual smoke test** — **NOT DONE. Deferred to Part 14.**
+
+  Blocked, not skipped. The flow needs a signed-in student, and the local
+  fixture (`Manual Verification Test`, `proctoringEnabled = false`, students
+  `student.a@` / `student.b@mitcoe.edu.in`) has no known password, while its
+  schedule window closed on 2026-09-17. Setting a dev password and moving the
+  window are both local-Postgres writes, and the write was refused by the
+  session's permission policy. Part 14 is the local-verification part and is
+  where this belongs; it must also cover the two things no test in this part
+  can reach: a real camera proving the gaze sign convention, and a real R2
+  presigned PUT.
 
 Start the dev server in a VS Code terminal (not background, not detached):
 
@@ -287,6 +315,42 @@ Do not push.
 - [ ] **Step 14: Update `PROGRESS.md`.**
 
 ---
+
+## Found while building this part
+
+- **`PROCTORING_SCREEN_REQUIRED=false` is not honoured by the pre-check.** The
+  flag arrives with the session config, and the session must not be created
+  until permissions are granted - otherwise a candidate who then denies them
+  leaves a live ACTIVE session that `/start` would accept, defeating the gate.
+  So the pre-check always requires screen sharing, which is the config default.
+  Honouring the flag needs it exposed on the session GET, an API change Part 6
+  closed. Left as-is and flagged.
+
+- **Screen sharing is requested BEFORE the camera.** `getDisplayMedia` needs
+  transient user activation and that expires a few seconds after the click; a
+  first-time camera prompt easily outlasts it. Asking for the screen while the
+  gesture is fresh is what stops "allow camera" from making screen sharing
+  impossible. It also means a screen denial never prompts for the camera at
+  all, which the test asserts.
+
+- **Gaze inference reads from the hook's own off-DOM video element**, not from
+  the `CameraPreview` the page renders. The preview unmounts when the page
+  switches from the pre-check to the questions, and binding inference to it
+  would stop detection at that exact moment.
+
+- **MediaPipe must be mocked in jsdom.** `GazeMonitor.create` never settles
+  under jsdom - it loads the 3.6 MB model and multi-megabyte WASM - so it hangs
+  a suite rather than failing it. Both new test files `vi.mock` the
+  `gaze-monitor` module. Any future jsdom test that starts proctoring needs the
+  same mock.
+
+- **A swept session is a dead end for the candidate.** The unique index on the
+  attempt FK is per attempt, not per attempt-and-status, so once the stale
+  sweep marks a session INTERRUPTED (default 180 s without a heartbeat) it
+  cannot be reopened, while the exam clock keeps running. `ProctoringRecovery`
+  detects `PROCTORING_SESSION_CLOSED` and says so plainly rather than offering
+  a button that will fail again. This is a real product gap inherited from
+  Part 4's locked schema, not something this part introduced.
 
 ## Done when
 
