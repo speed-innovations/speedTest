@@ -73,13 +73,13 @@ asserts it**, with a fixture deliberately over 2^31.
 
 ## Steps
 
-- [ ] **Step 1: Stop the dev server**
+- [x] **Step 1: Stop the dev server**
 
 On Windows a running server holds `node_modules/.prisma/client/query_engine-windows.dll.node`
 open and `prisma generate` fails with `EPERM: operation not permitted, rename`.
 The error names a temp file and gives no hint that a process is the cause.
 
-- [ ] **Step 2: Confirm you are local, on the right branch, against local Postgres**
+- [x] **Step 2: Confirm you are local, on the right branch, against local Postgres**
 
 ```bash
 git branch --show-current
@@ -94,13 +94,13 @@ node -e "const u=process.env.DATABASE_URL||require('fs').readFileSync('.env','ut
 Must print `LOCAL OK`. If it names `supabase.com`, **stop** — edit `.env` to the
 local URLs and comment out `DATABASE_CA_CERT_B64` before going further.
 
-- [ ] **Step 3: Install zod**
+- [x] **Step 3: Install zod**
 
 ```bash
 npm install zod
 ```
 
-- [ ] **Step 4: Add `proctoringEnabled` to the `Test` model**
+- [x] **Step 4: Add `proctoringEnabled` to the `Test` model**
 
 In `prisma/schema.prisma`, inside `model Test`, after `companyPptUrl`:
 
@@ -115,7 +115,7 @@ back-relation here: sessions link to *attempts*, not to the test, and both
 `requireScheduledAttempt` and `requireWalkInAttempt` already `include` the test
 (`attempt-auth.ts:83,103`), so the flag is reachable with no extra query.
 
-- [ ] **Step 5: Add the enums**
+- [x] **Step 5: Add the enums**
 
 At the end of `prisma/schema.prisma`:
 
@@ -162,7 +162,7 @@ enum ProctoringEventType {
 }
 ```
 
-- [ ] **Step 6: Add the three models**
+- [x] **Step 6: Add the three models**
 
 ```prisma
 /// One proctoring session per attempt.
@@ -276,7 +276,7 @@ model ProctoringEvent {
 }
 ```
 
-- [ ] **Step 7: Add back-relations to both attempt models**
+- [x] **Step 7: Add back-relations to both attempt models**
 
 In `model TestAttempt`, alongside `responses`:
 
@@ -290,13 +290,13 @@ In `model WalkInAttempt`, alongside `responses`:
   proctoringSession ProctoringSession?
 ```
 
-- [ ] **Step 8: Generate the migration without applying it**
+- [x] **Step 8: Generate the migration without applying it**
 
 ```bash
 npx prisma migrate dev --name add_proctoring --create-only
 ```
 
-- [ ] **Step 9: Hand-edit the migration to add the CHECK constraint**
+- [x] **Step 9: Hand-edit the migration to add the CHECK constraint**
 
 Prisma cannot express a CHECK. Append to the generated `migration.sql`:
 
@@ -313,7 +313,7 @@ ALTER TABLE "ProctoringSession"
   );
 ```
 
-- [ ] **Step 10: Apply to local Postgres and regenerate**
+- [x] **Step 10: Apply to local Postgres and regenerate**
 
 ```bash
 npx prisma migrate dev
@@ -323,7 +323,7 @@ npx prisma migrate dev
 npx prisma generate
 ```
 
-- [ ] **Step 11: Prove the CHECK actually fires**
+- [x] **Step 11: Prove the CHECK actually fires**
 
 A schema that merely *declares* the invariant is worth nothing; confirm the
 database enforces it. Run this and confirm it reports a rejection:
@@ -337,7 +337,7 @@ Expected: `OK: rejected - ...ProctoringSession_exactly_one_attempt...`
 If it inserts, the CHECK did not apply — fix the migration before continuing.
 Every downstream part assumes this invariant holds.
 
-- [ ] **Step 12: Write `src/lib/proctoring/config.ts`**
+- [x] **Step 12: Write `src/lib/proctoring/config.ts`**
 
 Validated and coerced at module load with zod. The app has no env validation
 today; this is the first. Defaults are the PRD's.
@@ -512,7 +512,7 @@ export function getR2Config(): R2Config {
 }
 ```
 
-- [ ] **Step 13: Write `src/lib/proctoring/types.ts`**
+- [x] **Step 13: Write `src/lib/proctoring/types.ts`**
 
 Shared types used by both server and client. Keep it free of any server-only
 import so the client can use it without dragging Prisma into the bundle.
@@ -548,7 +548,7 @@ export interface StartEligibility {
 }
 ```
 
-- [ ] **Step 14: Add the variables to `.env.example`**
+- [x] **Step 14: Add the variables to `.env.example`**
 
 Match the file's existing style — explain *why*, not just *what*. Append:
 
@@ -639,7 +639,7 @@ R2_PRESIGNED_DOWNLOAD_TTL_SECONDS="900"
 CRON_SECRET=""
 ```
 
-- [ ] **Step 15: Write the failing test**
+- [x] **Step 15: Write the failing test**
 
 `tests/proctoring-config.test.ts`:
 
@@ -724,7 +724,7 @@ describe('getR2Config', () => {
 })
 ```
 
-- [ ] **Step 16: Run it**
+- [x] **Step 16: Run it**
 
 ```bash
 npx vitest run tests/proctoring-config.test.ts
@@ -734,7 +734,7 @@ Expected: all pass. If `R2_ENDPOINT=""` in your local `.env` leaks in as an empt
 string and fails the `.url()` check, that is a real finding — change the schema to
 `z.string().url().optional().or(z.literal(''))` and treat empty as unset.
 
-- [ ] **Step 17: Typecheck and run the whole suite**
+- [x] **Step 17: Typecheck and run the whole suite**
 
 ```bash
 npx tsc --noEmit -p tsconfig.json
@@ -747,13 +747,13 @@ npm test
 Both must be clean. The existing suite must still pass — this part adds columns
 and models but changes no behaviour.
 
-- [ ] **Step 18: Confirm nothing leaked into the client bundle**
+- [x] **Step 18: Confirm nothing leaked into the client bundle**
 
 ```bash
 grep -rn "R2_SECRET_ACCESS_KEY\|R2_ACCESS_KEY_ID" src/app src/components 2>/dev/null || echo "clean: no R2 credentials referenced in app or component code"
 ```
 
-- [ ] **Step 19: Commit**
+- [x] **Step 19: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 1: schema, migration, and validated config"
@@ -761,7 +761,7 @@ git add -A && git commit -m "proctoring part 1: schema, migration, and validated
 
 Do not push.
 
-- [ ] **Step 20: Update `PROGRESS.md`** — mark Part 1 done with the commit hash,
+- [x] **Step 20: Update `PROGRESS.md`** — mark Part 1 done with the commit hash,
       and note anything surprising in Notes.
 
 ---

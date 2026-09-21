@@ -48,162 +48,166 @@ enum CandidateStatus {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String
-  password      String
-  role          Role
-  isActive      Boolean   @default(true)
-  mustResetPassword Boolean @default(false)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                String   @id @default(cuid())
+  email             String   @unique
+  name              String
+  password          String
+  role              Role
+  isActive          Boolean  @default(true)
+  mustResetPassword Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  college       College?  @relation("CollegeCoordinator", fields: [collegeId], references: [id])
-  collegeId     String?
+  college   College? @relation("CollegeCoordinator", fields: [collegeId], references: [id])
+  collegeId String?
 
   studentProfile StudentProfile?
-  testAttempts  TestAttempt[]
+  testAttempts   TestAttempt[]
   walkInAttempts WalkInAttempt[]
 
   @@index([collegeId])
 }
 
 model College {
-  id              String    @id @default(cuid())
-  name            String
-  address         String?
-  city            String?
-  state           String?
-  contactEmail    String?
-  contactPhone    String?
-  isActive        Boolean   @default(true)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id           String   @id @default(cuid())
+  name         String
+  address      String?
+  city         String?
+  state        String?
+  contactEmail String?
+  contactPhone String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  coordinators    User[]    @relation("CollegeCoordinator")
-  students        StudentProfile[]
-  testSchedules   TestSchedule[]
-  walkInTests     WalkInTestCollege[]
+  coordinators  User[]              @relation("CollegeCoordinator")
+  students      StudentProfile[]
+  testSchedules TestSchedule[]
+  walkInTests   WalkInTestCollege[]
 }
 
 model StudentProfile {
-  id              String    @id @default(cuid())
-  userId          String    @unique
-  user            User      @relation(fields: [userId], references: [id])
-  collegeId       String
-  college         College   @relation(fields: [collegeId], references: [id])
+  id        String  @id @default(cuid())
+  userId    String  @unique
+  user      User    @relation(fields: [userId], references: [id])
+  collegeId String
+  college   College @relation(fields: [collegeId], references: [id])
 
-  fullName        String
-  email           String
-  phone           String?
-  dateOfBirth     DateTime?
-  gender          String?
+  fullName    String
+  email       String
+  phone       String?
+  dateOfBirth DateTime?
+  gender      String?
 
   // Education
-  tenthMarks      Float?
-  tenthBoard      String?
-  tenthYear       Int?
-  twelfthMarks    Float?
-  twelfthBoard    String?
-  twelfthYear     Int?
-  graduationMarks Float?
+  tenthMarks       Float?
+  tenthBoard       String?
+  tenthYear        Int?
+  twelfthMarks     Float?
+  twelfthBoard     String?
+  twelfthYear      Int?
+  graduationMarks  Float?
   graduationDegree String?
-  graduationYear  Int?
-  pgMarks         Float?
-  pgDegree        String?
-  pgYear          Int?
+  graduationYear   Int?
+  pgMarks          Float?
+  pgDegree         String?
+  pgYear           Int?
 
   // Certifications stored as JSON
-  certifications  Json?
+  certifications Json?
 
-  resumeUrl       String?
-  status          CandidateStatus @default(REGISTERED)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  resumeUrl String?
+  status    CandidateStatus @default(REGISTERED)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
 
-  testAttempts    TestAttempt[]
-  walkInAttempts  WalkInAttempt[]
-  walkInEligible  WalkInEligibleStudent[]
+  testAttempts   TestAttempt[]
+  walkInAttempts WalkInAttempt[]
+  walkInEligible WalkInEligibleStudent[]
 
   @@index([collegeId])
   @@index([status])
 }
 
 model JobOpening {
-  id              String    @id @default(cuid())
-  title           String
-  description     String?
-  requiredSkills  String[]
+  id               String   @id @default(cuid())
+  title            String
+  description      String?
+  requiredSkills   String[]
   niceToHaveSkills String[]
-  location        String?
-  openings        Int       @default(1)
-  isActive        Boolean   @default(true)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  location         String?
+  openings         Int      @default(1)
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  tests           Test[]
+  tests Test[]
 }
 
 model Test {
-  id              String    @id @default(cuid())
+  id              String      @id @default(cuid())
   title           String
   description     String?
-  durationMinutes Int       @default(60)
-  totalMarks      Int       @default(100)
-  passingMarks    Int       @default(40)
-  status          TestStatus @default(DRAFT)
-  isActive        Boolean   @default(true)
-  isWalkIn        Boolean   @default(false)
+  durationMinutes Int         @default(60)
+  totalMarks      Int         @default(100)
+  passingMarks    Int         @default(40)
+  status          TestStatus  @default(DRAFT)
+  isActive        Boolean     @default(true)
+  isWalkIn        Boolean     @default(false)
   jobOpeningId    String?
   jobOpening      JobOpening? @relation(fields: [jobOpeningId], references: [id])
   companyPptUrl   String?
 
+  // Opt-in per test. Existing tests default to false and behave exactly as
+  // before - no proctoring UI, no session row, no extra requests.
+  proctoringEnabled Boolean @default(false)
+
   // Assessment areas with question counts
-  assessmentConfig Json     // [{area: "APTITUDE", count: 20, marks: 1}, ...]
+  assessmentConfig Json // [{area: "APTITUDE", count: 20, marks: 1}, ...]
 
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  schedules       TestSchedule[]
-  questions       TestQuestion[]
-  walkInAttempts  WalkInAttempt[]
-  walkInColleges  WalkInTestCollege[]
-  walkInEligible  WalkInEligibleStudent[]
+  schedules      TestSchedule[]
+  questions      TestQuestion[]
+  walkInAttempts WalkInAttempt[]
+  walkInColleges WalkInTestCollege[]
+  walkInEligible WalkInEligibleStudent[]
 }
 
 model TestSchedule {
-  id              String    @id @default(cuid())
-  testId          String
-  test            Test      @relation(fields: [testId], references: [id])
-  collegeId       String
-  college         College   @relation(fields: [collegeId], references: [id])
-  scheduledAt     DateTime
-  endsAt          DateTime
-  instructions    String?
-  isActive        Boolean   @default(true)
-  createdAt       DateTime  @default(now())
+  id           String   @id @default(cuid())
+  testId       String
+  test         Test     @relation(fields: [testId], references: [id])
+  collegeId    String
+  college      College  @relation(fields: [collegeId], references: [id])
+  scheduledAt  DateTime
+  endsAt       DateTime
+  instructions String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
 
-  attempts        TestAttempt[]
+  attempts TestAttempt[]
 
   @@index([collegeId, scheduledAt])
   @@index([testId])
 }
 
 model Question {
-  id              String    @id @default(cuid())
-  area            AssessmentArea
-  questionText    String
-  optionA         String
-  optionB         String
-  optionC         String
-  optionD         String
-  correctAnswer   String    // 'A', 'B', 'C', or 'D'
-  weightage       Float     @default(1)
-  difficulty      String    @default("MEDIUM") // EASY, MEDIUM, HARD
-  tags            String[]
-  isActive        Boolean   @default(true)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id            String         @id @default(cuid())
+  area          AssessmentArea
+  questionText  String
+  optionA       String
+  optionB       String
+  optionC       String
+  optionD       String
+  correctAnswer String // 'A', 'B', 'C', or 'D'
+  weightage     Float          @default(1)
+  difficulty    String         @default("MEDIUM") // EASY, MEDIUM, HARD
+  tags          String[]
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
   testQuestions   TestQuestion[]
   responses       CandidateResponse[]
@@ -214,45 +218,46 @@ model Question {
 }
 
 model TestQuestion {
-  id          String    @id @default(cuid())
-  testId      String
-  test        Test      @relation(fields: [testId], references: [id])
-  questionId  String
-  question    Question  @relation(fields: [questionId], references: [id])
-  orderIndex  Int
+  id         String   @id @default(cuid())
+  testId     String
+  test       Test     @relation(fields: [testId], references: [id])
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id])
+  orderIndex Int
 
   @@unique([testId, questionId])
 }
 
 model TestAttempt {
-  id              String    @id @default(cuid())
-  scheduleId      String
-  schedule        TestSchedule @relation(fields: [scheduleId], references: [id])
-  studentId       String
-  student         StudentProfile @relation(fields: [studentId], references: [id])
-  userId          String
-  user            User      @relation(fields: [userId], references: [id])
+  id         String         @id @default(cuid())
+  scheduleId String
+  schedule   TestSchedule   @relation(fields: [scheduleId], references: [id])
+  studentId  String
+  student    StudentProfile @relation(fields: [studentId], references: [id])
+  userId     String
+  user       User           @relation(fields: [userId], references: [id])
 
-  startedAt       DateTime?
+  startedAt   DateTime?
   // Server-authoritative deadline: set when the attempt is started.
   // min(startedAt + test.durationMinutes, schedule.endsAt). Never trust a client clock.
-  expiresAt       DateTime?
-  submittedAt     DateTime?
-  isSubmitted     Boolean   @default(false)
-  totalScore      Float?
+  expiresAt   DateTime?
+  submittedAt DateTime?
+  isSubmitted Boolean   @default(false)
+  totalScore  Float?
 
   // Assigned question set — persisted so resume always gets the same questions
-  questionIds     Json?     // ["cuid1", "cuid2", ...]
+  questionIds Json? // ["cuid1", "cuid2", ...]
 
   // Score by area stored as JSON
-  areaScores      Json?     // {APTITUDE: 18, DOTNET: 22, ...}
+  areaScores Json? // {APTITUDE: 18, DOTNET: 22, ...}
 
   // Tab/browser violations
-  violations      Json?     // [{questionId, type, timestamp}, ...]
+  violations Json? // [{questionId, type, timestamp}, ...]
 
-  createdAt       DateTime  @default(now())
+  createdAt DateTime @default(now())
 
-  responses       CandidateResponse[]
+  responses         CandidateResponse[]
+  proctoringSession ProctoringSession?
 
   @@unique([scheduleId, studentId])
   @@index([studentId])
@@ -260,56 +265,57 @@ model TestAttempt {
 }
 
 model CandidateResponse {
-  id              String    @id @default(cuid())
-  attemptId       String
-  attempt         TestAttempt @relation(fields: [attemptId], references: [id])
-  questionId      String
-  question        Question  @relation(fields: [questionId], references: [id])
-  selectedAnswer  String?
-  isCorrect       Boolean?
-  marksAwarded    Float?
-  answeredAt      DateTime?
-  flagged         Boolean   @default(false) // Tab change during this question
+  id             String      @id @default(cuid())
+  attemptId      String
+  attempt        TestAttempt @relation(fields: [attemptId], references: [id])
+  questionId     String
+  question       Question    @relation(fields: [questionId], references: [id])
+  selectedAnswer String?
+  isCorrect      Boolean?
+  marksAwarded   Float?
+  answeredAt     DateTime?
+  flagged        Boolean     @default(false) // Tab change during this question
 
   @@unique([attemptId, questionId])
   @@index([questionId])
 }
 
 model ShortlistCriteria {
-  id              String    @id @default(cuid())
+  id              String   @id @default(cuid())
   name            String
   testId          String?
   minTotalScore   Float?
-  minAreaScores   Json?     // {APTITUDE: 60, ...} percentage thresholds
+  minAreaScores   Json? // {APTITUDE: 60, ...} percentage thresholds
   minTenthMarks   Float?
   minTwelfthMarks Float?
   minGradMarks    Float?
-  isActive        Boolean   @default(true)
-  createdAt       DateTime  @default(now())
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
 }
 
 model WalkInAttempt {
-  id              String    @id @default(cuid())
-  testId          String
-  test            Test      @relation(fields: [testId], references: [id])
-  studentId       String
-  student         StudentProfile @relation(fields: [studentId], references: [id])
-  userId          String
-  user            User      @relation(fields: [userId], references: [id])
+  id        String         @id @default(cuid())
+  testId    String
+  test      Test           @relation(fields: [testId], references: [id])
+  studentId String
+  student   StudentProfile @relation(fields: [studentId], references: [id])
+  userId    String
+  user      User           @relation(fields: [userId], references: [id])
 
-  startedAt       DateTime?
+  startedAt   DateTime?
   // Server-authoritative deadline: startedAt + test.durationMinutes.
-  expiresAt       DateTime?
-  submittedAt     DateTime?
-  isSubmitted     Boolean   @default(false)
-  totalScore      Float?
-  questionIds     Json?     // Assigned question set — persisted for resume
-  areaScores      Json?
-  violations      Json?
+  expiresAt   DateTime?
+  submittedAt DateTime?
+  isSubmitted Boolean   @default(false)
+  totalScore  Float?
+  questionIds Json? // Assigned question set — persisted for resume
+  areaScores  Json?
+  violations  Json?
 
-  createdAt       DateTime  @default(now())
+  createdAt DateTime @default(now())
 
-  responses       WalkInResponse[]
+  responses         WalkInResponse[]
+  proctoringSession ProctoringSession?
 
   @@unique([testId, studentId])
   @@index([studentId])
@@ -317,41 +323,192 @@ model WalkInAttempt {
 }
 
 model WalkInTestCollege {
-  id        String    @id @default(cuid())
+  id        String   @id @default(cuid())
   testId    String
-  test      Test      @relation(fields: [testId], references: [id])
+  test      Test     @relation(fields: [testId], references: [id])
   collegeId String
-  college   College   @relation(fields: [collegeId], references: [id])
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
+  college   College  @relation(fields: [collegeId], references: [id])
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
 
   @@unique([testId, collegeId])
 }
 
 model WalkInEligibleStudent {
-  id        String    @id @default(cuid())
+  id        String         @id @default(cuid())
   testId    String
-  test      Test      @relation(fields: [testId], references: [id])
+  test      Test           @relation(fields: [testId], references: [id])
   studentId String
   student   StudentProfile @relation(fields: [studentId], references: [id])
-  isEnabled Boolean   @default(true)
-  createdAt DateTime  @default(now())
+  isEnabled Boolean        @default(true)
+  createdAt DateTime       @default(now())
 
   @@unique([testId, studentId])
 }
 
 model WalkInResponse {
-  id              String    @id @default(cuid())
-  attemptId       String
-  attempt         WalkInAttempt @relation(fields: [attemptId], references: [id])
-  questionId      String
-  question        Question  @relation(fields: [questionId], references: [id])
-  selectedAnswer  String?
-  isCorrect       Boolean?
-  marksAwarded    Float?
-  answeredAt      DateTime?
-  flagged         Boolean   @default(false)
+  id             String        @id @default(cuid())
+  attemptId      String
+  attempt        WalkInAttempt @relation(fields: [attemptId], references: [id])
+  questionId     String
+  question       Question      @relation(fields: [questionId], references: [id])
+  selectedAnswer String?
+  isCorrect      Boolean?
+  marksAwarded   Float?
+  answeredAt     DateTime?
+  flagged        Boolean       @default(false)
 
   @@unique([attemptId, questionId])
   @@index([questionId])
+}
+
+enum ProctoringSessionStatus {
+  PENDING
+  ACTIVE
+  DEGRADED
+  COMPLETED
+  INTERRUPTED
+  EXPIRED
+}
+
+enum ProctoringAssetType {
+  WEBCAM_SEGMENT
+  SCREENSHOT
+}
+
+enum ProctoringAssetStatus {
+  PENDING
+  UPLOADED
+  FAILED
+  EXPIRED
+  DELETED
+}
+
+enum ProctoringEventType {
+  GAZE_LEFT
+  GAZE_RIGHT
+  GAZE_UP
+  GAZE_DOWN
+  FACE_NOT_DETECTED
+  MULTIPLE_FACES_DETECTED
+  SCREEN_SHARE_STOPPED
+  SCREEN_SHARE_RESUMED
+  CAMERA_STOPPED
+  MICROPHONE_STOPPED
+  TAB_HIDDEN
+  WINDOW_BLURRED
+  PROCTORING_STARTED
+  PROCTORING_ENDED
+  UPLOAD_FAILURE
+  UPLOAD_RECOVERED
+}
+
+/// One proctoring session per attempt.
+///
+/// There is no single attempt table in this schema - TestAttempt (scheduled) and
+/// WalkInAttempt (walk-in) are parallel tables with no common parent. Rather than
+/// a polymorphic (kind, id) pair, which would give up referential integrity and
+/// cascade deletes, this carries both FKs with a CHECK enforcing exactly one.
+/// The dual-ness stops here: assets and events reference only this table.
+model ProctoringSession {
+  id String @id @default(cuid())
+
+  testAttemptId   String?        @unique
+  testAttempt     TestAttempt?   @relation(fields: [testAttemptId], references: [id], onDelete: Cascade)
+  walkInAttemptId String?        @unique
+  walkInAttempt   WalkInAttempt? @relation(fields: [walkInAttemptId], references: [id], onDelete: Cascade)
+
+  status  ProctoringSessionStatus @default(PENDING)
+  /// Bumped when the detection algorithm changes, so old evidence stays interpretable.
+  version String                  @default("1")
+
+  startedAt          DateTime?
+  endedAt            DateTime?
+  lastHeartbeatAt    DateTime?
+  /// startedAt + PROCTORING_RETENTION_HOURS. Assets inherit this.
+  retentionExpiresAt DateTime
+
+  recordingStarted   Boolean @default(false)
+  screenShareStarted Boolean @default(false)
+
+  /// Byte counters are Int, not BigInt - see the note in part-01. Per-row max is
+  /// ~111 MB against a 2.1 GB ceiling; BigInt would break JSON.stringify.
+  storageReservedBytes Int @default(0)
+  storageUsedBytes     Int @default(0)
+  uploadFailureCount   Int @default(0)
+  gazeWarningCount     Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  assets ProctoringAsset[]
+  events ProctoringEvent[]
+
+  @@index([status])
+  @@index([retentionExpiresAt])
+  @@index([lastHeartbeatAt])
+}
+
+/// A stored media object. Never holds a URL - only the R2 object key, so access
+/// always goes through a freshly signed, short-lived URL.
+model ProctoringAsset {
+  id                  String            @id @default(cuid())
+  proctoringSessionId String
+  session             ProctoringSession @relation(fields: [proctoringSessionId], references: [id], onDelete: Cascade)
+
+  type        ProctoringAssetType
+  /// R2 object key. Contains internal ids only - never a name, email or phone.
+  objectKey   String              @unique
+  contentType String
+  byteSize    Int                 @default(0)
+  /// Per type, starting at 1. Part of the idempotency key.
+  sequence    Int
+
+  capturedAt DateTime
+  uploadedAt DateTime?
+  /// Access is refused past this instant even if R2 has not yet deleted the object.
+  expiresAt  DateTime
+  status     ProctoringAssetStatus @default(PENDING)
+
+  /// Milliseconds since the attempt started. The correlation axis for review.
+  elapsedMs  Int?
+  /// Validated against the attempt's assigned question set, else null.
+  questionId String?
+
+  createdAt DateTime @default(now())
+
+  /// Idempotency: a retried completion must not create a second asset.
+  @@unique([proctoringSessionId, type, sequence])
+  @@index([proctoringSessionId, capturedAt])
+  @@index([expiresAt, status])
+}
+
+/// A proctoring observation. Evidence for a human reviewer - never a verdict, and
+/// never an input to scoring. Raw frames and face landmarks are never stored.
+model ProctoringEvent {
+  id                  String            @id @default(cuid())
+  proctoringSessionId String
+  session             ProctoringSession @relation(fields: [proctoringSessionId], references: [id], onDelete: Cascade)
+
+  type       ProctoringEventType
+  /// LEFT / RIGHT / UP / DOWN for gaze events, else null.
+  direction  String?
+  /// Client clock, for ordering within a batch.
+  occurredAt DateTime
+  /// Server receipt time. Authoritative when the two disagree.
+  receivedAt DateTime            @default(now())
+  elapsedMs  Int?
+  durationMs Int?
+  severity   String              @default("INFO")
+  questionId String?
+  metadata   Json?
+
+  /// Client-generated, for dedup across batch retries.
+  clientEventId String
+
+  createdAt DateTime @default(now())
+
+  @@unique([proctoringSessionId, clientEventId])
+  @@index([proctoringSessionId, occurredAt])
+  @@index([type])
 }
