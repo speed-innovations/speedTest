@@ -19,7 +19,7 @@ Branch: `feat/proctoring`
 | 1 | Schema, migration, config | ✅ DONE | 5a3265a | 2026-09-21 |
 | 2 | Storage abstraction | ✅ DONE | 908fa30 | 2026-09-21 |
 | 3 | Quota and reservation | ✅ DONE | ed5c3dd | 2026-09-21 |
-| 4 | Session lifecycle API | ⬜ NOT STARTED | — | — |
+| 4 | Session lifecycle API | ✅ DONE | ef1f428 | 2026-09-21 |
 | 5 | Upload APIs | ⬜ NOT STARTED | — | — |
 | 6 | Events API | ⬜ NOT STARTED | — | — |
 | 7 | Client core services | ⬜ NOT STARTED | — | — |
@@ -167,4 +167,49 @@ The math matched the PRD's worked example first try: 60 minutes reserves exactly
 Verification: `npx tsc --noEmit -p tsconfig.json` clean; `npm test` 114 passed
 across 11 files. `scripts/tsconfig.json` not run — no scripts touched. The DB
 tests wrote to local Postgres only.
+
+### Part 4 — 2026-09-21
+
+Commit `ef1f428`, local, not pushed.
+
+**One real design gap found, fixed in both the code and the part file.** The
+`@unique` on `ProctoringSession.testAttemptId` / `walkInAttemptId` is per
+attempt, *not* per attempt-and-status, so a finalized session permanently
+occupies its attempt. The part file's `startSession` caught `P2002`, looked for
+a live session, and rethrew the raw Prisma error when it found none — which
+`errorResponse` renders as a generic 500. That is exactly the path a candidate
+takes if they reload after submit. It now throws
+`HttpError(409, 'PROCTORING_SESSION_CLOSED')`, and there is a test for it.
+Note the consequence: **one proctoring session per attempt, ever.** A closed
+session cannot be restarted. Part 9's recovery screen must resume the existing
+ACTIVE session, never expect to create a second one.
+
+Smaller notes:
+
+- `parseBody` takes `ZodType<T>`, not `ZodSchema<T>`. zod 4 still exports
+  `ZodSchema` as a deprecated alias, but it is now `ZodType`'s any-typed form
+  and does not carry the `T`, so the generic would silently widen. Part file
+  updated.
+- `recordHeartbeat` uses `|| undefined` on `recordingStarted` /
+  `screenShareStarted`. That is the Prisma "leave this column alone" behaviour
+  the README warns about, used here **deliberately** as a latch — the question
+  those columns answer is "did this ever start?". Commented in place so nobody
+  reads it as the bug the README describes.
+- Step 9 needed real edits, not just confirmation: the scheduled GET returns the
+  nested `schedule` (which does carry the flag), but the walk-in GET builds a
+  hand-rolled `testPayload` that does **not** include it. Both now return a
+  top-level `proctoringEnabled`, in both the `started: false` and `started: true`
+  branches — four places.
+- The new test file overrides `PROCTORING_STORAGE_SAFETY_BYTES` per case rather
+  than using the default, because `tests/proctoring-quota-db.test.ts` parks 8 GB
+  of reservations in the same table and vitest may run the two files
+  concurrently. Any future quota-sensitive test needs the same treatment.
+
+`requireAdmin` is added but not yet used by anything; Part 10's admin routes are
+its first caller. The ~50 existing inline admin checks are untouched by design.
+
+Verification: `npx tsc --noEmit -p tsconfig.json` clean; `npm test` 133 passed
+across 12 files — including the pre-existing `attempt-ownership` and `responses`
+suites, which exercise the two `/start` routes the gate was added to.
+`scripts/tsconfig.json` not run — no scripts touched.
 
