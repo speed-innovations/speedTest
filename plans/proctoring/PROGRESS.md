@@ -22,7 +22,7 @@ Branch: `feat/proctoring`
 | 4 | Session lifecycle API | ✅ DONE | ef1f428 | 2026-09-21 |
 | 5 | Upload APIs | ✅ DONE | 1e7e20d | 2026-09-21 |
 | 6 | Events API | ✅ DONE | 8289cc9 | 2026-09-21 |
-| 7 | Client core services | ⬜ NOT STARTED | — | — |
+| 7 | Client core services | ✅ DONE | 0114b9b | 2026-09-21 |
 | 8 | Gaze detection | ⬜ NOT STARTED | — | — |
 | 9 | Candidate UI | ⬜ NOT STARTED | — | — |
 | 10 | Admin review UI | ⬜ NOT STARTED | — | — |
@@ -271,5 +271,47 @@ Two tests beyond the part file's list: non-gaze events must not touch
 
 Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
 160 passed across 15 files. `scripts/tsconfig.json` not run — no scripts
+touched.
+
+### Part 7 — 2026-09-21
+
+Commit `0114b9b`, local, not pushed.
+
+**The vitest config change disturbed nothing.** Part 12's step called this the
+riskiest edit in the part, so it was run in isolation first: all 15 pre-existing
+test files (160 tests) passed unchanged under the widened config before any new
+code was written. The per-file `// @vitest-environment jsdom` docblock works;
+only `tests/proctoring-screen-capture.test.tsx` opts in, and node stays the
+default for everything else.
+
+**`@vitejs/plugin-react` had to be pinned to `^4`.** Its current major (6.1.1)
+peers on `vite@^8`, while vitest 2.1.9 pins `vite@5`, so the part file's
+unpinned install fails outright with `ERESOLVE`. v4 supports vite 5 properly, so
+this is a pin rather than a `--legacy-peer-deps` fudge. Part file updated. The
+plugin is not actually needed by anything in this part - no component is
+rendered - but Part 9 will want it.
+
+Two of my own test bugs, both fixed in the tests rather than the code, worth
+knowing because the same shapes will recur in Part 9:
+
+- The upload-queue "never evicts an in-flight item" case hung the suite for 5s
+  and timed out. The queue was right; the test handed it an upload promise that
+  never settled and then awaited `drain()`. Any test that blocks an upload must
+  unblock every item before draining.
+- Every screen-capture case initially recorded zero `toBlob` calls, because they
+  called `capture()` without `start()` — `capture()` returns early when there is
+  no video element. They now drive `start()`, which is also the real entry point
+  and takes the immediate first snapshot that `quota.ts` budgets for.
+
+Also note `ScreenCapture.waitForDimensions` polls on a real 100ms `setInterval`
+with a 5s timeout. A test for the zero-dimension path must inject a `now` that
+leaps forward, or it holds the suite for the full 5 seconds.
+
+Both "Done when" greps pass: no `MediaRecorder` anywhere in `screen-capture.ts`
+(the screen is sampled, never recorded), and no React import anywhere under
+`client/`.
+
+Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
+199 passed across 19 files. `scripts/tsconfig.json` not run — no scripts
 touched.
 
