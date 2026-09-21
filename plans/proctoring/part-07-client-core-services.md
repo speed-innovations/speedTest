@@ -47,7 +47,7 @@ the two DOM-touching classes needing jsdom.
 
 ## Steps
 
-- [ ] **Step 1: Widen the Vitest config**
+- [x] **Step 1: Widen the Vitest config**
 
 `vitest.config.ts` currently has `include: ['tests/**/*.test.ts']` and
 `environment: 'node'` — `.tsx` is excluded outright.
@@ -73,8 +73,12 @@ export default defineConfig({
 ```
 
 ```bash
-npm install -D jsdom @testing-library/react @testing-library/jest-dom @vitejs/plugin-react
+npm install -D jsdom @testing-library/react @testing-library/jest-dom "@vitejs/plugin-react@^4"
 ```
+
+**Pin the plugin to the v4 line.** Its current major (6.x) peers on `vite@^8`,
+while vitest 2.1.9 pins `vite@5`; installing it unpinned fails with `ERESOLVE`.
+Do not reach for `--legacy-peer-deps` — v4 supports vite 5 properly.
 
 Run the existing suite immediately — this config change touches every test:
 
@@ -84,7 +88,7 @@ npm test
 
 All six pre-existing test files must still pass before you go further.
 
-- [ ] **Step 2: Write the state machine test** — `tests/proctoring-state-machine.test.ts`
+- [x] **Step 2: Write the state machine test** — `tests/proctoring-state-machine.test.ts`
 
 ```ts
 import { describe, it, expect } from 'vitest'
@@ -144,12 +148,12 @@ describe('nextState', () => {
 })
 ```
 
-- [ ] **Step 3: Implement `state-machine.ts`** as an explicit transition table.
+- [x] **Step 3: Implement `state-machine.ts`** as an explicit transition table.
       Anything not in the table returns the current state unchanged — that is
       what makes "ignores events that do not apply" true by construction rather
       than by a pile of `if`s.
 
-- [ ] **Step 4: Write `media-support.ts` with its test**
+- [x] **Step 4: Write `media-support.ts` with its test**
 
 ```ts
 /**
@@ -201,7 +205,7 @@ Test it by stubbing `MediaRecorder.isTypeSupported` to accept only the third
 candidate, and assert the picker falls back rather than failing. Also assert
 `checkBrowserSupport()` reports every missing capability, not just the first.
 
-- [ ] **Step 5: Write `upload-queue.ts` with its test**
+- [x] **Step 5: Write `upload-queue.ts` with its test**
 
 The queue is pure logic over injected callbacks — no DOM, so it tests in node.
 
@@ -237,7 +241,7 @@ export interface UploadQueueOptions {
 }
 ```
 
-- [ ] **Step 6: Write `webcam-recorder.ts`**
+- [x] **Step 6: Write `webcam-recorder.ts`**
 
 Key rules, each worth a comment in the source:
 
@@ -251,7 +255,7 @@ Key rules, each worth a comment in the source:
 - Emit each finished segment through a callback with its sequence, duration, and
   `elapsedMs`; the recorder does not know about uploading.
 
-- [ ] **Step 7: Write `screen-capture.ts`**
+- [x] **Step 7: Write `screen-capture.ts`**
 
 ```
 - holds the display stream purely to take snapshots; it NEVER constructs a
@@ -268,18 +272,18 @@ Its test is the jsdom one (`tests/proctoring-screen-capture.test.tsx`): stub
 `HTMLCanvasElement.prototype.toBlob` to return blobs of controlled sizes and
 assert the re-encode ladder runs in the right order and terminates.
 
-- [ ] **Step 8: Write `proctoring-api.ts`** — thin typed wrappers over the Part
+- [x] **Step 8: Write `proctoring-api.ts`** — thin typed wrappers over the Part
       4–6 endpoints. One place that knows the URLs, so Part 9 has no `fetch`
       calls in it. Every method returns a discriminated result rather than
       throwing, so the caller can degrade instead of crashing a live assessment.
 
-- [ ] **Step 9: Run the client tests**
+- [x] **Step 9: Run the client tests**
 
 ```bash
 npx vitest run tests/proctoring-state-machine.test.ts tests/proctoring-media-support.test.ts tests/proctoring-upload-queue.test.ts tests/proctoring-screen-capture.test.tsx
 ```
 
-- [ ] **Step 10: Typecheck and full suite**
+- [x] **Step 10: Typecheck and full suite**
 
 ```bash
 npx tsc --noEmit -p tsconfig.json
@@ -289,7 +293,7 @@ npx tsc --noEmit -p tsconfig.json
 npm test
 ```
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 7: client core services and jsdom test setup"
@@ -297,7 +301,7 @@ git add -A && git commit -m "proctoring part 7: client core services and jsdom t
 
 Do not push.
 
-- [ ] **Step 12: Update `PROGRESS.md`** — note whether the Vitest config change
+- [x] **Step 12: Update `PROGRESS.md`** — note whether the Vitest config change
       disturbed any existing test, since that is the riskiest edit in this part.
 
 ---
