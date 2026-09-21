@@ -25,7 +25,7 @@ Branch: `feat/proctoring`
 | 7 | Client core services | ✅ DONE | 0114b9b | 2026-09-21 |
 | 8 | Gaze detection | ✅ DONE | f45e1bc | 2026-09-21 |
 | 9 | Candidate UI | ✅ DONE | 220625b | 2026-09-21 |
-| 10 | Admin review UI | ⬜ NOT STARTED | — | — |
+| 10 | Admin review UI | ✅ DONE | 70f5d01 | 2026-09-21 |
 | 11 | Retention and cleanup | ⬜ NOT STARTED | — | — |
 | 12 | zod retrofit | ⬜ NOT STARTED | — | — |
 | 13 | Playwright E2E | ⬜ NOT STARTED | — | — |
@@ -448,3 +448,72 @@ Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
 is a grep for the R2 endpoint host and `DATABASE_URL`. `scripts/tsconfig.json`
 not run — no scripts touched. Step 7's grep parity: 7 and 7 on the narrow
 pattern, 49 and 49 on every proctoring reference.
+
+### Part 10 — 2026-09-21
+
+Commit `70f5d01`, local, not pushed. All 11 steps ticked.
+
+**The read models live in `src/lib/proctoring/admin.ts`** — `getAdminEvidence`
+and `getUsageReport` — which the part file's file list omitted even though its
+own test snippet called `getAdminEvidence`. The routes are thin Convention B
+wrappers. This matters for the leak checks: they stringify the real return value,
+so a future `include` pulling in `objectKey`, or someone bulk-signing URLs to
+save a round trip, fails the suite instead of shipping. The body is asserted to
+contain no `objectKey`, no `assessment-proctoring/`, no `X-Amz-Signature`, no
+`uploadUrl`, and no `http` at all.
+
+**The download-url route already existed** from Part 5 at
+`api/admin/proctoring/assets/[id]/download-url`. Nothing new was needed; both
+the player and the gallery call it one asset at a time.
+
+Three things the part file could not have known, all now recorded in it:
+
+- **Prisma orders enum columns by declaration order, not alphabetically.**
+  `orderBy: { type: 'asc' }` gives `WEBCAM_SEGMENT` then `SCREENSHOT`. A test
+  pins it, because adding an asset type above `WEBCAM_SEGMENT` in the schema
+  would silently reorder this response.
+- **`PROCTORING_STORAGE_SAFETY_BYTES` has a 100 MB floor**, so the over-budget
+  case cannot be made by lowering the budget below the fixtures. That test parks
+  a 2 GB reservation on a throwaway walk-in attempt and removes it in a
+  `finally`.
+- **Top-level `await` is illegal at this project's `es5` target** (TS1378) — it
+  ran green under vitest and only failed `tsc`. Static imports are correct;
+  `vi.mock` is hoisted above them. **Parts 11–13: do not reach for
+  `await import()` in tests.**
+
+Usage arithmetic is asserted as an **invariant** (`total = reserved + stored`,
+`remaining = max(0, safety - total)`) rather than against fixed numbers, for the
+same reason Part 4 recorded: other suites write into these tables and vitest may
+run them concurrently.
+
+**`npm run build` is blocked while the dev server runs, and this is worth
+knowing before Part 14.** The user's `npm run dev` (port 3001) holds
+`query_engine-windows.dll.node`, so `prisma generate` fails `EPERM` — the
+documented CLAUDE.md hazard. I did **not** kill their server. This part changed
+no schema, so I ran `npx next build` directly. That *also* failed once, in
+"Collecting page data", with a spurious `MODULE_NOT_FOUND: ./5611.js`: the dev
+server rewrites the shared `.next` directory mid-build. A retry succeeded
+cleanly. **Do not read either failure as a code defect** — but Part 14's
+verification will want the dev server stopped first.
+
+Neutral-language requirement honoured throughout: `EventTimeline` maps each
+event type to a plain description ("Looking left", "Second face detected"), shows
+a count and never a rate, percentile or grade, and the panel closes with a line
+saying gaze analysis cannot distinguish thinking from looking away. No severity
+colouring, no risk badge, no candidate ranking anywhere.
+
+The panel is collapsed by default and **fetches nothing until opened**, so the
+existing score-review flow is unchanged for reviewers not looking at proctoring.
+The tab-switch violations strip above it is untouched and deliberately not merged
+with proctoring events.
+
+Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
+**255 passed across 24 files** (17 new); `npx next build` exit 0 on retry, with
+`/admin/proctoring`, `/api/admin/proctoring/[attemptId]` and
+`/api/admin/proctoring/usage` all present in the route table. A grep of
+`.next/static` for `objectKey` and `X-Amz-Signature` is empty.
+`scripts/tsconfig.json` not run — no scripts touched.
+
+Also cleaned up: an orphaned `node -e` psql probe of my own from earlier in the
+session (PID 6024) was still holding a DB connection and was killed. The user's
+dev server was left running.

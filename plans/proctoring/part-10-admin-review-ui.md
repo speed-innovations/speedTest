@@ -180,7 +180,7 @@ npx vitest run tests/proctoring-admin-api.test.ts
 npx tsc --noEmit -p tsconfig.json && npm test && npm run build
 ```
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 10: admin evidence review and R2 usage page"
@@ -188,7 +188,7 @@ git add -A && git commit -m "proctoring part 10: admin evidence review and R2 us
 
 Do not push.
 
-- [ ] **Step 11: Update `PROGRESS.md`.**
+- [x] **Step 11: Update `PROGRESS.md`.**
 
 ---
 
