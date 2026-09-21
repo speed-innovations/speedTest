@@ -38,7 +38,7 @@ candidate, and the pg pool is `max: 3`.
 
 ## Steps
 
-- [ ] **Step 1: Extend `src/lib/proctoring/schemas.ts`**
+- [x] **Step 1: Extend `src/lib/proctoring/schemas.ts`**
 
 ```ts
 export const eventTypeSchema = z.enum([
@@ -61,8 +61,16 @@ const eventSchema = z.object({
   durationMs: z.number().int().min(0).max(3_600_000).optional(),
   severity: z.enum(['INFO', 'WARN']).default('INFO'),
   questionId: idSchema.optional(),
-  /** Small, bounded. Never landmarks, never image data. */
-  metadata: z.record(z.union([z.string().max(200), z.number(), z.boolean()])).optional(),
+  /**
+   * Small, bounded. Never landmarks, never image data.
+   *
+   * The key schema is given explicitly so client-supplied key names are bounded
+   * too - the value bound alone would still admit a megabyte of key text.
+   */
+  metadata: z.record(
+    z.string().max(40),
+    z.union([z.string().max(200), z.number(), z.boolean()])
+  ).optional(),
 })
 
 export const eventBatchSchema = z.object({
@@ -77,7 +85,7 @@ export const eventBatchSchema = z.object({
 export type IncomingEvent = z.infer<typeof eventSchema>
 ```
 
-- [ ] **Step 2: Write `src/lib/proctoring/events.ts`**
+- [x] **Step 2: Write `src/lib/proctoring/events.ts`**
 
 ```ts
 import { prisma } from '@/lib/db'
@@ -138,7 +146,7 @@ export async function ingestEvents(
 }
 ```
 
-- [ ] **Step 3: Write the route** — `src/app/api/student/proctoring/events/route.ts`
+- [x] **Step 3: Write the route** — `src/app/api/student/proctoring/events/route.ts`
 
 ```ts
 import { NextRequest, NextResponse } from 'next/server'
@@ -174,7 +182,7 @@ export async function POST(req: NextRequest) {
 }
 ```
 
-- [ ] **Step 4: Write `tests/proctoring-events-api.test.ts`**
+- [x] **Step 4: Write `tests/proctoring-events-api.test.ts`**
 
 Cover:
 
@@ -212,13 +220,13 @@ it('does not inflate the gaze count when a batch is replayed', async () => {
 })
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 ```bash
 npx vitest run tests/proctoring-events-api.test.ts
 ```
 
-- [ ] **Step 6: Typecheck and full suite**
+- [x] **Step 6: Typecheck and full suite**
 
 ```bash
 npx tsc --noEmit -p tsconfig.json
@@ -228,7 +236,7 @@ npx tsc --noEmit -p tsconfig.json
 npm test
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 6: batched event ingest with server-side dedup"
@@ -236,7 +244,7 @@ git add -A && git commit -m "proctoring part 6: batched event ingest with server
 
 Do not push.
 
-- [ ] **Step 8: Update `PROGRESS.md`.**
+- [x] **Step 8: Update `PROGRESS.md`.**
 
 ---
 
