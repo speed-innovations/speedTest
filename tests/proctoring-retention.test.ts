@@ -225,20 +225,32 @@ describe('runRetentionCleanup', () => {
   })
 
   it('bounds the batch and reports batchExhausted when it fills', async () => {
+    const ids: string[] = []
     for (let i = 10; i < 15; i++) {
-      await seedAsset({ sequence: i, expiresInHours: -1 })
+      ids.push((await seedAsset({ sequence: i, expiresInHours: -1 })).id)
     }
 
     const report = await runRetentionCleanup({ batchSize: 3 })
 
+    // The bound itself is exact - that is this run's own behaviour.
     expect(report.assetsExpired).toBe(3)
     expect(report.batchExhausted).toBe(true)
 
-    // The remainder drains on the next run, which is what makes a backlog
-    // survivable rather than something that has to be fixed by hand.
-    const next = await runRetentionCleanup({ batchSize: 3 })
-    expect(next.assetsExpired).toBe(2)
-    expect(next.batchExhausted).toBe(false)
+    // The remainder drains on later runs, which is what makes a backlog
+    // survivable rather than something that has to be fixed by hand. The counts
+    // are NOT asserted: other suites write expired assets into the same table
+    // and vitest may run them concurrently, so a global tally is not this
+    // file's to control. What is asserted is that every asset this test seeded
+    // ends up deleted.
+    await runRetentionCleanup({ batchSize: 3 })
+    await runRetentionCleanup({ batchSize: 3 })
+
+    const mine = await prisma.proctoringAsset.findMany({
+      where: { id: { in: ids } },
+      select: { status: true },
+    })
+    expect(mine.length).toBe(5)
+    expect(mine.every(a => a.status === 'DELETED')).toBe(true)
   })
 
   it('drains oldest-first after a multi-day gap', async () => {

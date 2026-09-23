@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { pickQuestionsByConfig } from '@/lib/question-picker'
+import type { AreaConfigInput } from '@/lib/schemas/admin'
 import {
   requireStudent,
   errorResponse,
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: st
       return NextResponse.json({ error: 'Test already submitted' }, { status: 400 })
 
     if (!attempt) {
-      const questionIds = await pickQuestionsByConfig(test.assessmentConfig as any[])
+      const questionIds = await pickQuestionsByConfig(test.assessmentConfig as unknown as AreaConfigInput[])
       try {
         attempt = await prisma.walkInAttempt.create({
           data: {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { pickQuestionsByConfig } from '@/lib/question-picker'
+import type { AreaConfigInput } from '@/lib/schemas/admin'
 import {
   requireStudent,
   errorResponse,
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ testId: str
 
     // Server picks and persists the question set before the student can influence it.
     if (!attempt) {
-      const questionIds = await pickQuestionsByConfig(test.assessmentConfig as any[])
+      const questionIds = await pickQuestionsByConfig(test.assessmentConfig as unknown as AreaConfigInput[])
       attempt = await prisma.walkInAttempt.create({
         data: {
           testId: params.testId,

@@ -114,24 +114,28 @@ describe('POST /api/admin/tests', () => {
     expect(await readFlag(test.id)).toBe(true)
   })
 
-  it('refuses to enable proctoring from a non-boolean', async () => {
-    // A form that serialised the checkbox as a string must not switch on
-    // recording. The check is === true, not a truthy test, precisely so the
-    // string "false" - which is truthy - cannot enable it either.
-    const fromTrueString = await createTest({ title: `${TAG}-str-true`, proctoringEnabled: 'true' })
-    const fromFalseString = await createTest({ title: `${TAG}-str-false`, proctoringEnabled: 'false' })
-    const fromOne = await createTest({ title: `${TAG}-one`, proctoringEnabled: 1 })
-
-    expect(await readFlag(fromTrueString.id)).toBe(false)
-    expect(await readFlag(fromFalseString.id)).toBe(false)
-    expect(await readFlag(fromOne.id)).toBe(false)
+  it('rejects a non-boolean proctoringEnabled outright', async () => {
+    // Part 12 tightened this. It used to be accepted and silently ignored
+    // (=== true, so a stringified checkbox could not switch on recording);
+    // zod now rejects the request instead, which is strictly better - a form
+    // sending the wrong type finds out, rather than quietly creating an
+    // unproctored test the admin believes is proctored.
+    asAdmin()
+    for (const bad of ['true', 'false', 1]) {
+      const res = await post({ ...BASE, title: `${TAG}-bad-${String(bad)}`, proctoringEnabled: bad })
+      expect(res.status).toBe(400)
+      asAdmin()
+    }
+    expect(await prisma.test.count({ where: { title: { startsWith: `${TAG}-bad-` } } })).toBe(0)
   })
 
   it('rejects a non-admin', async () => {
     getServerSession.mockResolvedValue({ user: { email: studentEmail, role: 'STUDENT' } })
     const res = await post({ ...BASE, title: `${TAG}-denied`, proctoringEnabled: true })
 
-    expect(res.status).toBe(401)
+    // 403 since Part 12's retrofit: the caller is signed in, just not an admin.
+    // The old inline check conflated that with "not signed in" and said 401.
+    expect(res.status).toBe(403)
     expect(await prisma.test.count({ where: { title: `${TAG}-denied` } })).toBe(0)
   })
 })
@@ -168,13 +172,13 @@ describe('PUT /api/admin/tests/[id]', () => {
     expect(row.durationMinutes).toBe(30)
   })
 
-  it('ignores a non-boolean rather than clearing the flag', async () => {
+  it('rejects a non-boolean without touching the stored flag', async () => {
     const test = await createTest({ title: `${TAG}-junk`, proctoringEnabled: true })
 
     asAdmin()
-    expect((await put(test.id, { proctoringEnabled: 'false' })).status).toBe(200)
-    // Not a boolean, so it is treated as "not sent" - it must not clear the
-    // column, and it must not enable it either.
+    // Rejected since Part 12 rather than silently treated as "not sent". What
+    // still matters either way: the stored column is not disturbed.
+    expect((await put(test.id, { proctoringEnabled: 'false' })).status).toBe(400)
     expect(await readFlag(test.id)).toBe(true)
   })
 
@@ -184,7 +188,8 @@ describe('PUT /api/admin/tests/[id]', () => {
     getServerSession.mockResolvedValue({ user: { email: studentEmail, role: 'STUDENT' } })
     const res = await put(test.id, { proctoringEnabled: true })
 
-    expect(res.status).toBe(401)
+    // 403 since Part 12's retrofit - signed in, but not an admin.
+    expect(res.status).toBe(403)
     expect(await readFlag(test.id)).toBe(false)
   })
 })

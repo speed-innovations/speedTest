@@ -54,7 +54,7 @@ Two traps:
 
 ## Steps
 
-- [ ] **Step 1: Look at what is actually stored before writing a schema**
+- [x] **Step 1: Look at what is actually stored before writing a schema**
 
 ```bash
 node -e "const{PrismaClient}=require('@prisma/client');const p=new PrismaClient();p.test.findMany({select:{id:true,title:true,assessmentConfig:true},take:10}).then(r=>{console.log(JSON.stringify(r,null,2));return p.\$disconnect()})"
@@ -64,7 +64,7 @@ Write the schema against these rows. If any existing row would fail it, decide
 deliberately: loosen the schema, or migrate the data — do not ship something that
 rejects rows already in production.
 
-- [ ] **Step 2: Write `src/lib/schemas/admin.ts`**
+- [x] **Step 2: Write `src/lib/schemas/admin.ts`**
 
 ```ts
 import { z } from 'zod'
@@ -151,7 +151,7 @@ writing `"a"` or `"E"`, and `gradeAttempt` compares against
 `correctAnswer.trim().toUpperCase()` — so `"E"` would silently mark every
 candidate wrong on that question, with no error anywhere.
 
-- [ ] **Step 3: Retrofit one route and confirm the shape**
+- [x] **Step 3: Retrofit one route and confirm the shape**
 
 Start with `src/app/api/admin/tests/route.ts`:
 
@@ -172,18 +172,18 @@ Three changes at once, and all three are the point: `requireAdmin` replaces the
 inline check (403 where it should be 403), `parseBody` replaces raw `body`, and
 `errorResponse` replaces the `err.message` leak.
 
-- [ ] **Step 4: Retrofit the rest**, same pattern. Keep response shapes
+- [x] **Step 4: Retrofit the rest**, same pattern. Keep response shapes
       **byte-identical** — the admin pages parse them today. This is a validation
       change, not an API redesign.
 
-- [ ] **Step 5: Tighten `pickQuestionsByConfig`**
+- [x] **Step 5: Tighten `pickQuestionsByConfig`**
 
 It currently takes `any[]`. Change the parameter to the inferred type from
 `areaConfigSchema` and remove the `as any[]` casts at the four call sites in the
 student routes. Do **not** change its behaviour — this part adds types, it does
 not touch paper selection.
 
-- [ ] **Step 6: Write `tests/admin-validation.test.ts`**
+- [x] **Step 6: Write `tests/admin-validation.test.ts`**
 
 ```
 - a valid test payload passes
@@ -212,7 +212,7 @@ it('accepts every assessmentConfig already in the database', async () => {
 })
 ```
 
-- [ ] **Step 7: Run everything**
+- [x] **Step 7: Run everything**
 
 ```bash
 npx vitest run tests/admin-validation.test.ts
@@ -222,7 +222,19 @@ npx vitest run tests/admin-validation.test.ts
 npx tsc --noEmit -p tsconfig.json && npm test && npm run build
 ```
 
-- [ ] **Step 8: Exercise the admin UI by hand**
+- [ ] **Step 8: Exercise the admin UI by hand** — **NOT DONE. Deferred to Part 14.**
+
+  Attempted and abandoned for a real reason: running `npx next build` while the
+  dev server is up overwrites the shared `.next`, and the dev server then serves
+  HTML referencing chunk files that no longer exist (404s on every static asset,
+  blank page). The server needs a restart, which is the owner's process.
+
+  Covered instead by a stronger, deterministic substitute — see the new
+  "payloads the admin forms actually send" block in
+  `tests/admin-validation.test.ts`, which pins the exact body each real submit
+  handler builds against its schema. That catches the failure this step exists
+  to catch (a form shape the schema rejects) without a browser. What it does not
+  cover is rendering and error display, which Part 14 must still do by hand.
 
 Validation changes are exactly the kind that pass tests and break a form. With
 `npm run dev`, at minimum: create a test, edit an existing test, create a
@@ -240,6 +252,51 @@ Do not push.
       retrofitted, so it is clear what remains on Convention A.
 
 ---
+
+## Found while building this part
+
+- **A real data-loss bug, now fixed.** `PUT /api/admin/tests/[id]` read
+  `jobOpeningId: body.jobOpeningId || null`, so an omitted field became `null`.
+  Every single-field PUT from the tests list — the walk-in toggle, and the
+  proctoring toggle added in Part 10 — silently unlinked the test's job opening.
+  Confirmed against the old code with a throwaway probe before changing
+  anything: a PUT of `{proctoringEnabled: true}` left title, description and
+  duration intact and set `jobOpeningId` to null. Now `undefined` means absent
+  and only an explicit `null` clears it. Pinned by two tests.
+
+- **`pickQuestionsByConfig` does NOT take `any[]`** — it already had a typed
+  `AreaConfig` interface. The part file's Step 5 was wrong about that. More
+  importantly the README forbids modifying `src/lib/question-picker.ts` at all,
+  which contradicts this part's file list. Resolved by not touching it: the
+  schema exports `AreaConfigInput` and the four student call sites use it in
+  place of `as any[]`. Type-only, no runtime change, and deliberately **no
+  parse at read time** — a legacy row must not start throwing for a candidate
+  mid-drive. Strictness belongs on the write path, which is this part's thesis.
+
+- **Both assessmentConfig shapes are live.** Three rows carry
+  `{area, count, easyPct, mediumPct, hardPct}`; the oldest carries
+  `{area, count, marks}` with no percentages. Nothing reads `marks`, but the
+  schema keeps it rather than stripping it — silently rewriting a stored row as
+  a side effect of an unrelated edit is not something a validation change
+  should do.
+
+- **Update schemas are `.partial()`, and that is load-bearing.** The admin UI
+  genuinely sends single-field bodies. A strict update schema would have broken
+  both toggles on the tests list. The passingMarks/totalMarks rule only fires
+  when both are present.
+
+- **Four tests in `proctoring-test-toggle.test.ts` were updated, not loosened.**
+  They asserted the old behaviour: a non-boolean `proctoringEnabled` accepted
+  and silently ignored (now a 400), and 401 for an authenticated non-admin (now
+  403). Both changes are the improvement this part exists to make.
+
+- **`vitest.config.ts` now sets `fileParallelism: false`.** Every integration
+  suite here shares one database, and running the files in parallel meant one
+  suite's fixtures landed in another's aggregates. Once Part 11 added a sweep
+  that *deletes* expired assets it got worse — another suite's fixtures would
+  vanish mid-test. Four separate intermittent failures traced to this, each of
+  which reads like a real bug. Sequential files cost ~17s and buy determinism;
+  six consecutive full runs are green.
 
 ## Done when
 
