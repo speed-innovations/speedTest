@@ -23,6 +23,7 @@ export default function CreateTestPage() {
     passingMarks: 40,
     jobOpeningId: '',
     isWalkIn: false,
+    proctoringEnabled: false,
   })
   const [areas, setAreas] = useState<AreaConfig[]>([
     { area: 'APTITUDE', count: 20, easyPct: 30, mediumPct: 50, hardPct: 20 }
@@ -132,6 +133,15 @@ export default function CreateTestPage() {
             <label htmlFor="isWalkIn" className="text-sm">
               <span className="font-medium text-orange-700">Walk-in Mode (Lab)</span>
               <span className="text-orange-600 block text-xs">Enable for candidates present in lab. No schedule needed — timer starts when candidate begins.</span>
+            </label>
+          </div>
+          <div className="flex items-center gap-3 p-3 bg-brand-purple/5 rounded-lg border border-brand-purple/20">
+            <input type="checkbox" id="proctoringEnabled" checked={form.proctoringEnabled}
+              onChange={e => setForm(f => ({ ...f, proctoringEnabled: e.target.checked }))}
+              className="w-4 h-4 text-brand-purple rounded" />
+            <label htmlFor="proctoringEnabled" className="text-sm">
+              <span className="font-medium text-brand-purple">Proctored Assessment</span>
+              <span className="text-gray-600 block text-xs">Records webcam, microphone and periodic screen snapshots, with gaze analysis running locally in the candidate&apos;s browser. Candidates must grant camera, microphone and screen sharing before the timer starts. Evidence is deleted automatically after about three days.</span>
             </label>
           </div>
         </div>

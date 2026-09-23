@@ -33,6 +33,9 @@ export async function POST(req: NextRequest) {
       jobOpeningId: body.jobOpeningId || null,
       isWalkIn: body.isWalkIn || false,
       status: body.isWalkIn ? 'ACTIVE' : 'DRAFT',
+      // Strict === true, not a truthy check: this flag decides whether a
+      // candidate is recorded, so the string "false" must never switch it on.
+      proctoringEnabled: body.proctoringEnabled === true,
     }
   })
   return NextResponse.json(test, { status: 201 })

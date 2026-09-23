@@ -36,6 +36,14 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
       isWalkIn: body.isWalkIn,
       assessmentConfig: body.assessmentConfig,
       jobOpeningId: body.jobOpeningId || null,
+      // undefined when the caller did not send the field, which Prisma reads as
+      // "leave this column alone". That is deliberate here and is how every
+      // other field in this route already behaves: the tests list sends partial
+      // bodies (the walk-in toggle sends only isWalkIn and status), and those
+      // must not silently switch proctoring off. Only an explicit boolean
+      // changes it.
+      proctoringEnabled:
+        typeof body.proctoringEnabled === 'boolean' ? body.proctoringEnabled : undefined,
     }
   })
   return NextResponse.json(test)

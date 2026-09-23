@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
-import { Plus, Clock, CheckSquare, Pencil, Trash2, Zap, Users, Search } from 'lucide-react'
+import { Plus, Clock, CheckSquare, Pencil, Trash2, Zap, Users, Search, ShieldCheck } from 'lucide-react'
 import { AREA_LABELS } from '@/lib/areas'
 
 const statusColor: Record<string, string> = {
@@ -54,6 +54,28 @@ export default function TestsPage() {
     })
     if (res.ok) {
       toast.success(!currentlyWalkIn ? 'Walk-in mode enabled' : 'Walk-in mode disabled')
+      load()
+    } else {
+      toast.error('Failed to update')
+    }
+  }
+
+  /**
+   * Turn proctoring on or off for a test.
+   *
+   * Sends only this field. The PUT route leaves every column the caller omits
+   * alone, so this cannot disturb the schedule, status or question config.
+   */
+  async function handleToggleProctoring(testId: string, currentlyOn: boolean) {
+    const res = await fetch(`/api/admin/tests/${testId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proctoringEnabled: !currentlyOn })
+    })
+    if (res.ok) {
+      toast.success(!currentlyOn
+        ? 'Proctoring enabled — candidates will be asked for camera, microphone and screen sharing'
+        : 'Proctoring disabled')
       load()
     } else {
       toast.error('Failed to update')
@@ -136,6 +158,11 @@ export default function TestsPage() {
                             <Zap size={10} /> Walk-in
                           </span>
                         )}
+                        {test.proctoringEnabled && (
+                          <span className="text-xs bg-brand-purple/10 text-brand-purple px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <ShieldCheck size={10} /> Proctored
+                          </span>
+                        )}
                       </div>
                       {test.jobOpening && (
                         <p className="text-xs text-gray-500 mt-0.5">For: {test.jobOpening.title}</p>
@@ -166,6 +193,16 @@ export default function TestsPage() {
                         : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                     }`} title={test.isWalkIn ? 'Disable walk-in mode' : 'Enable walk-in mode (no schedule needed)'}>
                     <Zap size={13} /> {test.isWalkIn ? 'Walk-in On' : 'Walk-in'}
+                  </button>
+                  <button onClick={() => handleToggleProctoring(test.id, test.proctoringEnabled)}
+                    className={`text-xs py-1.5 px-3 rounded-lg flex items-center gap-1 transition-colors ${
+                      test.proctoringEnabled
+                        ? 'bg-brand-purple/10 text-brand-purple hover:bg-brand-purple/20'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                    }`} title={test.proctoringEnabled
+                      ? 'Disable proctoring for this test'
+                      : 'Enable proctoring: webcam, microphone and screen snapshots, deleted after ~3 days'}>
+                    <ShieldCheck size={13} /> {test.proctoringEnabled ? 'Proctored' : 'Proctor'}
                   </button>
                   <Link href={`/admin/tests/${test.id}`} className="btn-secondary text-xs py-1.5 px-3">
                     View
