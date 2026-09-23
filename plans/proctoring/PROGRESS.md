@@ -27,7 +27,7 @@ Branch: `feat/proctoring`
 | 9 | Candidate UI | ✅ DONE | 220625b | 2026-09-21 |
 | 10 | Admin review UI | ✅ DONE | 70f5d01 | 2026-09-21 |
 | 11 | Retention and cleanup | ✅ DONE | 3448ebf | 2026-09-24 |
-| 12 | zod retrofit | ⬜ NOT STARTED | — | — |
+| 12 | zod retrofit | ✅ DONE | 89da43f | 2026-09-24 |
 | 13 | Playwright E2E | ⬜ NOT STARTED | — | — |
 | 14 | Docs and local verification | ⬜ NOT STARTED | — | — |
 | 15 | **Release — GATED** | 🔒 BLOCKED | — | — |
@@ -621,3 +621,78 @@ scripts touched.
 Next session note: Part 12 is the zod retrofit. Remember **top-level `await` is
 illegal at this project's `es5` target** — static imports with hoisted
 `vi.mock`, not `await import()`.
+
+### Part 12 — 2026-09-24
+
+Commit `89da43f`, local, not pushed. 9 of 10 steps ticked; **Step 8 (exercise
+the admin UI by hand) is NOT done** — see below.
+
+**Routes retrofitted** (all now `requireAdmin` + `parseBody` + `errorResponse`):
+
+| Route | Methods |
+|---|---|
+| `api/admin/tests` | GET, POST |
+| `api/admin/tests/[id]` | GET, PUT, DELETE |
+| `api/admin/colleges` | GET, POST |
+| `api/admin/colleges/[id]` | GET, PUT, DELETE |
+| `api/admin/questions` | GET, POST |
+| `api/admin/questions/[id]` | PUT, DELETE |
+| `api/admin/job-openings` | POST (GET left public, as it was) |
+| `api/admin/job-openings/[id]` | PUT, PATCH, DELETE |
+
+**Still on Convention A**, deliberately out of scope: every other admin route
+(candidates, coordinators, results, schedules, shortlist, walkin-*, stats,
+import/export). `api/admin/candidates/import` and `api/admin/questions/import`
+still return `err.message` in a 500 — the only two remaining leaks of that kind.
+
+**A real data-loss bug was found and fixed.** `PUT /api/admin/tests/[id]` read
+`jobOpeningId: body.jobOpeningId || null`, so an omitted field became `null`.
+Every single-field PUT from the tests list — the walk-in toggle, and the
+proctoring toggle added in Part 10 — silently unlinked the test's job opening.
+I confirmed it against the old code with a throwaway probe before changing
+anything, rather than asserting it from reading. Now `undefined` means absent
+and only an explicit `null` clears it; both behaviours are pinned by tests.
+
+**The part file was wrong about `pickQuestionsByConfig`** — it already took a
+typed `AreaConfig`, not `any[]`. More significantly, its file list said to
+modify `src/lib/question-picker.ts`, which the README **forbids outright**.
+Resolved by not touching it: the schema exports `AreaConfigInput` and the four
+student call sites use it instead of `as any[]`. Type-only, and deliberately no
+parse at read time — a legacy row must not start throwing for a candidate
+mid-drive. Strictness belongs on the write path.
+
+**Both assessmentConfig shapes are live in the database.** Three rows carry
+percentages, the oldest carries `{area, count, marks}`. `marks` is preserved
+rather than stripped.
+
+**Update schemas are `.partial()`**, which is load-bearing — the admin UI sends
+single-field bodies and a strict update schema would have broken both toggles.
+
+Four tests in `proctoring-test-toggle.test.ts` were **updated, not loosened**:
+they asserted a non-boolean being silently ignored (now 400) and 401 for an
+authenticated non-admin (now 403). Both are the improvement this part makes.
+
+**`vitest.config.ts` now sets `fileParallelism: false`, and this matters beyond
+this part.** Every integration suite shares one database; parallel files put one
+suite's fixtures into another's aggregates, and once Part 11 added a sweep that
+*deletes* expired assets, another suite's fixtures would vanish mid-test. Four
+separate intermittent failures traced to this — including one I had wrongly
+reported as green in Part 10 off a single run. Sequential files cost ~17s
+(7s → 24s). **Do not revert this to speed the suite up.**
+
+**Step 8 is blocked, not skipped.** Running `npx next build` while the dev server
+is up overwrites the shared `.next`, after which the dev server serves HTML
+referencing chunks that no longer exist — 404s on every static asset and a blank
+page. Recovering needs a dev-server restart, which is the owner's process, so I
+stopped rather than killing it. Covered instead by a deterministic substitute: a
+new block in `tests/admin-validation.test.ts` pins the **exact payload each real
+admin submit handler builds** (new test, edit test, CollegeForm, question-bank
+`emptyQ()`, job-openings create and its PATCH) against its schema. That catches
+the failure Step 8 exists to catch — a form shape the schema rejects — but not
+rendering or error display. **Part 14 must click through the admin forms by
+hand, with the dev server freshly restarted.**
+
+Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
+**302 passed across 27 files**, run **six consecutive times** after the
+parallelism fix; `npx next build` exit 0. `scripts/tsconfig.json` not run — no
+scripts touched.

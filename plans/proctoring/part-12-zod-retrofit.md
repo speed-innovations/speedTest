@@ -240,7 +240,7 @@ Validation changes are exactly the kind that pass tests and break a form. With
 `npm run dev`, at minimum: create a test, edit an existing test, create a
 college, edit a question. Each must still work and still show useful errors.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 12: zod validation for high-risk admin write routes"
@@ -248,7 +248,7 @@ git add -A && git commit -m "proctoring part 12: zod validation for high-risk ad
 
 Do not push.
 
-- [ ] **Step 10: Update `PROGRESS.md`** — list exactly which routes were
+- [x] **Step 10: Update `PROGRESS.md`** — list exactly which routes were
       retrofitted, so it is clear what remains on Convention A.
 
 ---
