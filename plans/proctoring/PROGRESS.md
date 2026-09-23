@@ -517,3 +517,58 @@ Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
 Also cleaned up: an orphaned `node -e` psql probe of my own from earlier in the
 session (PID 6024) was still holding a DB connection and was killed. The user's
 dev server was left running.
+
+### Out of band — admin toggle for `Test.proctoringEnabled` — 2026-09-24
+
+Commit `30c7dfc`, local, not pushed. **Not part of any numbered part** — a gap
+found while the owner was manually testing.
+
+`Test.proctoringEnabled` was accepted by no admin API route and rendered on no
+admin page. The column could only be changed by writing to the database by hand,
+which meant **the feature could not be switched on in production at all**. The
+plan never assigned this to a part; Parts 1-10 all assumed the column was
+already settable.
+
+Added: the field on `POST /api/admin/tests` and `PUT /api/admin/tests/[id]`, a
+checkbox on the new and edit test forms, and a toggle button plus a "Proctored"
+badge on the tests list.
+
+Two deliberate details, both covered by `tests/proctoring-test-toggle.test.ts`:
+
+- **The update route writes the column only when an explicit boolean arrives**,
+  leaving it `undefined` otherwise. That is the Prisma "leave this column alone"
+  behaviour the README flags as a hazard, used here on purpose and consistently
+  with how every other field in that route already behaves — the tests list
+  sends single-field PUTs (the walk-in toggle sends only `isWalkIn` and
+  `status`), and one of those must never silently un-proctor a test. That is the
+  regression the test file exists for.
+- **Creation requires `=== true`**, not a truthy check. A form that serialised
+  the checkbox as a string must not start recording candidates, and `"false"` is
+  truthy.
+
+These two routes stay Convention A (inline session check). They were not
+converted to Convention B here — that is Part 12's bounded retrofit, and
+rewriting them while adding a field would have mixed a behaviour change into a
+refactor.
+
+Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
+**263 passed across 25 files**, run twice; `npx next build` exit 0.
+
+### Local environment — 2026-09-24
+
+`.env` had no proctoring block at all, so `PROCTORING_ENABLED` defaulted to
+false and every session start was refused 503 `PROCTORING_DISABLED`. Both local
+tests also had `proctoringEnabled = false`, so the candidate page showed the
+plain Start button and no pre-check. Both fixed locally (`.env` is gitignored;
+the column was set on both local test rows).
+
+**Do not set the cadence knobs in `.env`.** vitest reads that file, and
+`PROCTORING_SCREENSHOT_INTERVAL_MS` / `PROCTORING_VIDEO_SEGMENT_MS` feed
+`estimateAttemptBytes`, so overriding them breaks the pinned reservation
+arithmetic in `proctoring-quota-math` and `proctoring-session-api`. Set them
+per-command instead.
+
+Still outstanding before this works end to end with real storage: R2
+credentials, a bucket CORS rule allowing PUT from the app origin, the proctoring
+migration applied to Supabase by hand, and Part 11's cleanup job — without which
+the 7 GB budget fills once and stays full.
