@@ -53,7 +53,7 @@ The pg pool is `max: 3`. Deletions run sequentially, never fanned out.
 
 ## Steps
 
-- [ ] **Step 1: Write `src/lib/proctoring/retention.ts`**
+- [x] **Step 1: Write `src/lib/proctoring/retention.ts`**
 
 ```ts
 import { prisma } from '@/lib/db'
@@ -143,7 +143,7 @@ export async function runRetentionCleanup(
 }
 ```
 
-- [ ] **Step 2: Write the cleanup endpoint** — `src/app/api/cron/proctoring-cleanup/route.ts`
+- [x] **Step 2: Write the cleanup endpoint** — `src/app/api/cron/proctoring-cleanup/route.ts`
 
 ```ts
 import { NextRequest, NextResponse } from 'next/server'
@@ -181,7 +181,7 @@ export async function POST(req: NextRequest) {
 }
 ```
 
-- [ ] **Step 3: Write the workflow** — `.github/workflows/proctoring-cleanup.yml`
+- [x] **Step 3: Write the workflow** — `.github/workflows/proctoring-cleanup.yml`
 
 Write the file. **Do not push it.** A scheduled workflow only becomes active once
 it is on the default branch, which is Part 15.
@@ -241,7 +241,7 @@ jobs:
           fi
 ```
 
-- [ ] **Step 4: Add the finalization safety net to both submit routes**
+- [x] **Step 4: Add the finalization safety net to both submit routes**
 
 After the `$transaction` closes (`submit/route.ts:96`), **outside** it:
 
@@ -264,7 +264,7 @@ After the `$transaction` closes (`submit/route.ts:96`), **outside** it:
 
 Mirror into the walk-in submit route with `walkInAttemptId`. **Both files.**
 
-- [ ] **Step 5: Write `tests/proctoring-retention.test.ts`**
+- [x] **Step 5: Write `tests/proctoring-retention.test.ts`**
 
 ```
 - an asset past expiresAt is deleted from storage and marked DELETED
@@ -301,7 +301,7 @@ it('stops counting expired assets against the storage budget', async () => {
 })
 ```
 
-- [ ] **Step 6: Run the tests, typecheck, full suite**
+- [x] **Step 6: Run the tests, typecheck, full suite**
 
 ```bash
 npx vitest run tests/proctoring-retention.test.ts
@@ -311,7 +311,7 @@ npx vitest run tests/proctoring-retention.test.ts
 npx tsc --noEmit -p tsconfig.json && npm test
 ```
 
-- [ ] **Step 7: Exercise the endpoint locally**
+- [x] **Step 7: Exercise the endpoint locally**
 
 With the dev server running and `CRON_SECRET` set in `.env`:
 
@@ -339,6 +339,43 @@ Do not push. The workflow file is committed but inert until it reaches `main`.
       yet active, so Part 15 does not forget to verify its first run.
 
 ---
+
+## Found while building this part
+
+- **The safety net goes BEFORE `if (!result.applied)`, not merely "after the
+  transaction".** Both submit routes have *two* return paths: the early return
+  for an already-submitted attempt, and the normal one. Placing the net after
+  the early return would skip finalization on exactly the re-submit case where
+  the client most likely died. It sits immediately after the transaction closes,
+  ahead of both.
+
+- **`DELETABLE` is typed `ProctoringAssetStatus[]`, not `as const`.** Prisma's
+  `in` filter takes the generated enum array; `as const` needs a cast to
+  satisfy it, and the cast is what hides a genuine mismatch later. This is the
+  same correction Part 3 made to `RESERVING` in quota.ts.
+
+- **MockStorage's seed helper is `putForTest`, not `put`.**
+
+- **The workflow uses `sed '$d'` rather than `head -n -1`** to strip the status
+  line. `head -n -1` is a GNU coreutils extension; ubuntu-latest has it, but
+  the sed form is portable and costs nothing.
+
+- **Five route-handler tests were added beyond the part file's list.** The part
+  file only asked for a manual curl, which cannot run in CI and does not cover
+  the unset-secret path. The handler is now tested directly for 200 on a
+  correct secret, 401 on a wrong one, 401 on a missing header, acceptance of a
+  bare token without the `Bearer` prefix, and **503 rather than a fall-through
+  when `CRON_SECRET` is unset** - that last one is the case where a
+  misconfigured deployment could otherwise have run cleanup unauthenticated.
+
+- **The budget test asserts this session's own contribution**, not a global
+  before/after subtraction. Other suites write into the same tables and vitest
+  may run them concurrently - a global delta is the race that flaked Part 10's
+  usage test about half of all runs.
+
+- **Fixtures carry relative expiry** (`expiresInHours: -1`) instead of the part
+  file's shared far-future `now`. Each asset is seeded already-expired or not,
+  which reads better than threading `{ now: future }` through every call.
 
 ## Done when
 
