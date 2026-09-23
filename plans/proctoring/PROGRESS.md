@@ -26,7 +26,7 @@ Branch: `feat/proctoring`
 | 8 | Gaze detection | ✅ DONE | f45e1bc | 2026-09-21 |
 | 9 | Candidate UI | ✅ DONE | 220625b | 2026-09-21 |
 | 10 | Admin review UI | ✅ DONE | 70f5d01 | 2026-09-21 |
-| 11 | Retention and cleanup | ⬜ NOT STARTED | — | — |
+| 11 | Retention and cleanup | ✅ DONE | 3448ebf | 2026-09-24 |
 | 12 | zod retrofit | ⬜ NOT STARTED | — | — |
 | 13 | Playwright E2E | ⬜ NOT STARTED | — | — |
 | 14 | Docs and local verification | ⬜ NOT STARTED | — | — |
@@ -572,3 +572,52 @@ Still outstanding before this works end to end with real storage: R2
 credentials, a bucket CORS rule allowing PUT from the app origin, the proctoring
 migration applied to Supabase by hand, and Part 11's cleanup job — without which
 the 7 GB budget fills once and stays full.
+
+### Part 11 — 2026-09-24
+
+Commit `3448ebf`, local, not pushed. All 9 steps ticked.
+
+**The workflow exists but is INERT.** `.github/workflows/proctoring-cleanup.yml`
+is committed, but a scheduled workflow only becomes active once it is on the
+default branch. **Part 15 must verify its first real run** — and set the
+`CRON_SECRET` repository secret before merging, or the first scheduled run fails
+on a missing secret rather than on anything interesting. `vars.APP_URL` falls
+back to the Render URL, so that one is optional.
+
+**One placement correction to the part file.** It said to add the finalization
+safety net "after the `$transaction` closes", but both submit routes have *two*
+return paths — the early return for an already-submitted attempt, and the normal
+one. Putting the net after the early return would skip finalization on exactly
+the re-submit case where the client most likely died. It now sits immediately
+after the transaction, ahead of both returns, in both files.
+
+Smaller corrections, all made in the part file too:
+
+- `DELETABLE` is typed `ProctoringAssetStatus[]`, not `as const` plus a cast —
+  the same fix Part 3 made to `RESERVING`.
+- MockStorage's seed helper is `putForTest`, not `put`.
+- The workflow uses `sed '$d'` rather than the GNU-only `head -n -1`.
+
+**Five route-handler tests added beyond the part file's list.** It only asked
+for a manual curl, which cannot run in CI and does not cover the unset-secret
+path. The handler is now pinned for 200 on a correct secret, 401 on a wrong one,
+401 on a missing header, acceptance of a bare token without the `Bearer` prefix,
+and **503 rather than a fall-through when `CRON_SECRET` is unset** — a
+misconfigured deployment must not end up running cleanup unauthenticated.
+
+The budget test asserts this session's own contribution rather than a global
+before/after subtraction, for the concurrency reason that flaked Part 10's usage
+test.
+
+`CRON_SECRET` was generated and added to local `.env` (gitignored).
+`.env.example` already documented it from Part 1 — nothing to add there.
+
+Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
+**271 passed across 26 files**, run twice. Step 7 was exercised against the
+running dev server for real: the correct secret returned HTTP 200 with a full
+report, a wrong secret returned **401**. `scripts/tsconfig.json` not run — no
+scripts touched.
+
+Next session note: Part 12 is the zod retrofit. Remember **top-level `await` is
+illegal at this project's `es5` target** — static imports with hoisted
+`vi.mock`, not `await import()`.

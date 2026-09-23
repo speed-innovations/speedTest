@@ -327,7 +327,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer wron
 
 Must print `401`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A && git commit -m "proctoring part 11: retention cleanup, scheduled workflow, and submit finalization"
@@ -335,7 +335,7 @@ git add -A && git commit -m "proctoring part 11: retention cleanup, scheduled wo
 
 Do not push. The workflow file is committed but inert until it reaches `main`.
 
-- [ ] **Step 9: Update `PROGRESS.md`** — note that the workflow exists but is not
+- [x] **Step 9: Update `PROGRESS.md`** — note that the workflow exists but is not
       yet active, so Part 15 does not forget to verify its first run.
 
 ---
