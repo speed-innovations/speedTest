@@ -1,95 +1,79 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { getProctoringConfig, getR2Config, resetProctoringConfigForTests } from '@/lib/proctoring/config'
+import { getProctoringConfig, resetProctoringConfigForTests } from '@/lib/proctoring/config'
 
 /**
- * Configuration is the first thing every other module reads. A silently wrong
- * byte budget or threshold would not surface until a candidate is mid-assessment,
- * so the coercion and the bounds are locked here.
+ * Proctoring config. Metadata-only since the live-monitoring phase: there is
+ * no storage provider and no credential, so none may be required.
  */
 
-const saved = { ...process.env }
+const KEYS = [
+  'PROCTORING_ENABLED', 'PROCTORING_OPERATIONAL', 'PROCTORING_RETENTION_HOURS',
+  'PROCTORING_GAZE_WARNING_MS', 'PROCTORING_GAZE_WARNING_COOLDOWN_MS',
+  'PROCTORING_FACE_MISSING_WARNING_MS', 'PROCTORING_MULTIPLE_FACES_WARNING_MS',
+  'PROCTORING_SCREEN_REQUIRED', 'PROCTORING_HEARTBEAT_INTERVAL_MS', 'PROCTORING_STALE_SESSION_MS',
+  'PROCTORING_STORAGE_PROVIDER', 'R2_ACCOUNT_ID', 'R2_BUCKET_NAME', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
+]
+let saved: Record<string, string | undefined> = {}
 
-beforeEach(() => { resetProctoringConfigForTests() })
-afterEach(() => { process.env = { ...saved }; resetProctoringConfigForTests() })
+beforeEach(() => {
+  saved = {}
+  KEYS.forEach(k => { saved[k] = process.env[k]; delete process.env[k] })
+  resetProctoringConfigForTests()
+})
+
+afterEach(() => {
+  KEYS.forEach(k => {
+    if (saved[k] === undefined) delete process.env[k]
+    else process.env[k] = saved[k]
+  })
+  resetProctoringConfigForTests()
+})
 
 describe('getProctoringConfig', () => {
-  it('defaults to disabled, mock storage, and the PRD thresholds', () => {
-    delete process.env.PROCTORING_ENABLED
-    delete process.env.PROCTORING_STORAGE_PROVIDER
-    delete process.env.PROCTORING_GAZE_WARNING_MS
+  it('defaults to disabled with the documented heartbeat and stale windows', () => {
     const c = getProctoringConfig()
     expect(c.enabled).toBe(false)
-    expect(c.storageProvider).toBe('mock')
-    expect(c.gazeWarningMs).toBe(1500)
-    expect(c.gazeWarningCooldownMs).toBe(10_000)
+    expect(c.operational).toBe(true)
+    expect(c.screenRequired).toBe(true)
     expect(c.retentionHours).toBe(72)
-    expect(c.storageSafetyBytes).toBe(7_000_000_000)
+    expect(c.heartbeatIntervalMs).toBe(20_000)
+    expect(c.staleSessionMs).toBe(180_000)
   })
 
-  it('coerces numeric strings rather than leaving them as strings', () => {
-    process.env.PROCTORING_GAZE_WARNING_MS = '2500'
-    const c = getProctoringConfig()
-    expect(c.gazeWarningMs).toBe(2500)
-    expect(typeof c.gazeWarningMs).toBe('number')
-  })
-
-  it('converts the safety multiplier from percent to a factor', () => {
-    process.env.PROCTORING_SAFETY_MULTIPLIER_PCT = '150'
-    expect(getProctoringConfig().safetyMultiplier).toBe(1.5)
+  it('coerces numeric strings', () => {
+    process.env.PROCTORING_HEARTBEAT_INTERVAL_MS = '15000'
+    expect(getProctoringConfig().heartbeatIntervalMs).toBe(15_000)
   })
 
   it('treats "true" and "1" as true and everything else as false', () => {
     process.env.PROCTORING_ENABLED = '1'
     expect(getProctoringConfig().enabled).toBe(true)
     resetProctoringConfigForTests()
-    process.env.PROCTORING_ENABLED = 'no'
+    process.env.PROCTORING_ENABLED = 'yes'
     expect(getProctoringConfig().enabled).toBe(false)
   })
 
   it('throws on an out-of-range value instead of using it', () => {
-    // A 10ms gaze threshold would fire a warning on every frame.
-    process.env.PROCTORING_GAZE_WARNING_MS = '10'
-    expect(() => getProctoringConfig()).toThrow(/Invalid proctoring configuration/)
+    process.env.PROCTORING_HEARTBEAT_INTERVAL_MS = '10'
+    expect(() => getProctoringConfig()).toThrow(/PROCTORING_HEARTBEAT_INTERVAL_MS/)
   })
 
   it('throws on a non-numeric value instead of coercing to NaN', () => {
-    process.env.PROCTORING_RETENTION_HOURS = 'seventy-two'
-    expect(() => getProctoringConfig()).toThrow(/Invalid proctoring configuration/)
+    process.env.PROCTORING_STALE_SESSION_MS = 'soon'
+    expect(() => getProctoringConfig()).toThrow()
   })
 
-  it('treats an empty string as unset, since .env placeholders load as ""', () => {
+  it('treats an empty string as unset', () => {
     process.env.PROCTORING_RETENTION_HOURS = ''
-    process.env.PROCTORING_ENABLED = ''
+    expect(getProctoringConfig().retentionHours).toBe(72)
+  })
+
+  it('needs no storage provider or credentials, and ignores leftovers', () => {
+    process.env.PROCTORING_ENABLED = 'true'
+    process.env.PROCTORING_STORAGE_PROVIDER = 'r2' // stale value from an old .env
     const c = getProctoringConfig()
-    expect(c.retentionHours).toBe(72)
-    expect(c.enabled).toBe(false)
-  })
-})
-
-describe('getR2Config', () => {
-  it('throws when credentials are missing, rather than falling back', () => {
-    delete process.env.R2_ACCOUNT_ID
-    delete process.env.R2_BUCKET_NAME
-    delete process.env.R2_ACCESS_KEY_ID
-    delete process.env.R2_SECRET_ACCESS_KEY
-    expect(() => getR2Config()).toThrow(/not configured/)
-  })
-
-  it('derives the endpoint from the account id when none is given', () => {
-    process.env.R2_ACCOUNT_ID = 'abc123'
-    process.env.R2_BUCKET_NAME = 'bucket'
-    process.env.R2_ACCESS_KEY_ID = 'key'
-    process.env.R2_SECRET_ACCESS_KEY = 'secret'
-    delete process.env.R2_ENDPOINT
-    expect(getR2Config().endpoint).toBe('https://abc123.r2.cloudflarestorage.com')
-  })
-
-  it('derives the endpoint when R2_ENDPOINT is an empty placeholder', () => {
-    process.env.R2_ACCOUNT_ID = 'abc123'
-    process.env.R2_BUCKET_NAME = 'bucket'
-    process.env.R2_ACCESS_KEY_ID = 'key'
-    process.env.R2_SECRET_ACCESS_KEY = 'secret'
-    process.env.R2_ENDPOINT = ''
-    expect(getR2Config().endpoint).toBe('https://abc123.r2.cloudflarestorage.com')
+    expect(c.enabled).toBe(true)
+    expect(Object.keys(c)).not.toContain('storageProvider')
+    expect(Object.keys(c).join(',')).not.toMatch(/storage|bytes|r2/i)
   })
 })

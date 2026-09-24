@@ -18,12 +18,10 @@ export async function POST(req: NextRequest) {
     // have noticed yet. Tell it, and let it stop.
     if (!session) return NextResponse.json({ ok: true, session: null })
 
-    const degraded = (body.pendingUploads ?? 0) > 5 || !body.recording
-    await recordHeartbeat(session.id, {
-      recording: body.recording,
-      screenSharing: body.screenSharing,
-      degraded,
-    })
+    // Any required device down is a degraded session. There is no recording
+    // or upload backlog to report any more - only live device health.
+    const degraded = !body.cameraLive || !body.micLive || !body.screenSharing
+    await recordHeartbeat(session.id, { screenSharing: body.screenSharing, degraded })
     return NextResponse.json({ ok: true, session: { sessionId: session.id, degraded } })
   } catch (err) {
     return errorResponse(err, 'Proctoring heartbeat error', 'Could not record heartbeat.')

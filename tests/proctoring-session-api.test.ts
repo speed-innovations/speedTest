@@ -14,16 +14,9 @@ import { resetProctoringConfigForTests } from '@/lib/proctoring/config'
  * Integration test for the proctoring session lifecycle, against a real
  * database. It exercises the lib helpers rather than HTTP, matching
  * tests/attempt-ownership.test.ts - the routes are thin wrappers over these.
- *
- * The storage budget is overridden per test rather than left at the default,
- * so these cases neither depend on nor disturb whatever else is in the
- * ProctoringSession table (tests/proctoring-quota-db.test.ts parks 8 GB of
- * reservations there and may run concurrently).
  */
 
 const TAG = `session-test-${Date.now()}`
-const BIG_BUDGET = '500000000000'   // 500 GB - always room
-const TINY_BUDGET = '100000000'     // 100 MB - less than one 60-minute attempt
 
 let collegeId = ''
 let studentAId = ''
@@ -160,8 +153,6 @@ afterAll(async () => {
 beforeEach(() => {
   process.env.PROCTORING_ENABLED = 'true'
   process.env.PROCTORING_OPERATIONAL = 'true'
-  process.env.PROCTORING_STORAGE_PROVIDER = 'mock'
-  process.env.PROCTORING_STORAGE_SAFETY_BYTES = BIG_BUDGET
   resetProctoringConfigForTests()
 })
 
@@ -208,14 +199,13 @@ describe('resolveOwnedAttempt', () => {
 })
 
 describe('startSession', () => {
-  it('creates an ACTIVE session and reserves bytes', async () => {
+  it('creates an ACTIVE session', async () => {
     const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
     const s = await startSession(a)
     expect(s.status).toBe('ACTIVE')
     const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
     expect(row.testAttemptId).toBe(attemptAId)
     expect(row.walkInAttemptId).toBeNull()
-    expect(row.storageReservedBytes).toBe(111_000_000)
     expect(row.lastHeartbeatAt).not.toBeNull()
   })
 
@@ -247,21 +237,6 @@ describe('startSession', () => {
     await expect(startSession(a)).rejects.toMatchObject({ status: 409 })
   })
 
-  it('refuses with 503 and the quota reason when the budget is exhausted', async () => {
-    process.env.PROCTORING_STORAGE_SAFETY_BYTES = TINY_BUDGET
-    resetProctoringConfigForTests()
-    // submittedAttemptId is the only attempt without a session; use a fresh one.
-    const a = await resolveOwnedAttempt(walkInAttemptId, 'walkin', walkInTestId, studentAId)
-    await prisma.proctoringSession.deleteMany({ where: { walkInAttemptId } })
-    // 503, not 403 - an operational limit, not an authorization failure. And
-    // the reason is machine-readable so the UI can say which one it was.
-    await expect(startSession(a)).rejects.toMatchObject({
-      status: 503,
-      message: 'PROCTORING_STORAGE_LIMIT_REACHED',
-    })
-    expect(await prisma.proctoringSession.count({ where: { walkInAttemptId } })).toBe(0)
-  })
-
   it('refuses with 503 when proctoring is globally disabled', async () => {
     process.env.PROCTORING_ENABLED = 'false'
     resetProctoringConfigForTests()
@@ -279,27 +254,26 @@ describe('recordHeartbeat', () => {
     const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
     const s = await startSession(a)
     // Deliberately a small backdate, not minutes: a stale-looking heartbeat
-    // could be picked up by sweepStaleReservations running in a concurrent test
+    // could be picked up by sweepStaleSessions running in a concurrent test
     // file and marked INTERRUPTED underneath this test.
     const before = new Date(Date.now() - 5_000)
     await prisma.proctoringSession.update({
       where: { id: s.id },
       data: { lastHeartbeatAt: before, status: 'ACTIVE' },
     })
-    await recordHeartbeat(s.id, { recording: true, screenSharing: true, degraded: false })
+    await recordHeartbeat(s.id, { screenSharing: true, degraded: false })
     const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
     expect(row.lastHeartbeatAt!.getTime()).toBeGreaterThan(before.getTime())
     expect(row.status).toBe('ACTIVE')
-    expect(row.recordingStarted).toBe(true)
     expect(row.screenShareStarted).toBe(true)
   })
 
-  it('sets DEGRADED when the client reports a backlog, and recovers', async () => {
+  it('sets DEGRADED when a device is down, and recovers', async () => {
     const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
     const s = await startSession(a)
-    await recordHeartbeat(s.id, { recording: true, screenSharing: true, degraded: true })
+    await recordHeartbeat(s.id, { screenSharing: true, degraded: true })
     expect((await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })).status).toBe('DEGRADED')
-    await recordHeartbeat(s.id, { recording: true, screenSharing: true, degraded: false })
+    await recordHeartbeat(s.id, { screenSharing: true, degraded: false })
     expect((await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })).status).toBe('ACTIVE')
   })
 
@@ -307,14 +281,14 @@ describe('recordHeartbeat', () => {
     const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
     const s = await startSession(a)
     await finalizeSession(s.id, 'COMPLETED')
-    await recordHeartbeat(s.id, { recording: true, screenSharing: true, degraded: false })
+    await recordHeartbeat(s.id, { screenSharing: true, degraded: false })
     const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
     expect(row.status).toBe('COMPLETED')
   })
 })
 
 describe('finalizeSession', () => {
-  it('marks COMPLETED, stamps endedAt, and zeroes the reservation', async () => {
+  it('marks COMPLETED and stamps endedAt', async () => {
     await prisma.proctoringSession.deleteMany({ where: { testAttemptId: attemptAId } })
     const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
     const s = await startSession(a)
@@ -322,8 +296,6 @@ describe('finalizeSession', () => {
     const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
     expect(row.status).toBe('COMPLETED')
     expect(row.endedAt).not.toBeNull()
-    expect(row.storageReservedBytes).toBe(0)
-    expect(row.storageUsedBytes).toBe(0)
   })
 
   it('is idempotent - a second finalize changes nothing', async () => {

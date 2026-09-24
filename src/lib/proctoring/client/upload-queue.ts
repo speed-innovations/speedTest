@@ -1,4 +1,9 @@
-import type { UploadState } from '../types'
+// UploadState used to live in '../types'. It was removed there in the
+// live-monitoring migration (proctoring stores no media, so there is nothing
+// left to upload), but this queue itself is only rewired/removed in a later
+// task - so the type it needs is kept local rather than reintroduced as a
+// shared export.
+type UploadState = 'PENDING' | 'UPLOADING' | 'UPLOADED' | 'FAILED' | 'EXPIRED'
 
 /**
  * A bounded, retrying upload queue.

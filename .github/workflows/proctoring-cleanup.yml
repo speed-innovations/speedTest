@@ -1,9 +1,7 @@
 name: Proctoring retention cleanup
 
-# Media is expired by the application the moment expiresAt passes; this job
-# removes the bytes and keeps the storage ledger honest. GitHub's scheduler is
-# routinely 10-30 minutes late and disables schedules after 60 days of repo
-# inactivity, so the endpoint is catch-up capable and safe to run repeatedly.
+# Closes proctoring sessions whose browser stopped sending heartbeats and
+# expires sessions past retention. Catch-up capable and safe to run repeatedly.
 #
 # NOTE: a scheduled workflow only becomes active once it is on the default
 # branch. This file is inert until Part 15 merges it to main.

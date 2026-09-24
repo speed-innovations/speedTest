@@ -22,15 +22,10 @@ export async function POST(req: NextRequest) {
       // Client capture parameters come from the server so a deploy can retune
       // them without shipping new client code.
       config: {
-        screenshotIntervalMs: cfg.screenshotIntervalMs,
-        videoSegmentMs: cfg.videoSegmentMs,
-        videoBitsPerSecond: cfg.videoBitsPerSecond,
-        audioBitsPerSecond: cfg.audioBitsPerSecond,
         gazeWarningMs: cfg.gazeWarningMs,
         gazeWarningCooldownMs: cfg.gazeWarningCooldownMs,
         faceMissingWarningMs: cfg.faceMissingWarningMs,
         multipleFacesWarningMs: cfg.multipleFacesWarningMs,
-        maxScreenshotBytes: cfg.maxScreenshotBytes,
         heartbeatIntervalMs: cfg.heartbeatIntervalMs,
         screenRequired: cfg.screenRequired,
       },

@@ -5,9 +5,8 @@ import { runRetentionCleanup } from '@/lib/proctoring/retention'
  * Called by the scheduled GitHub workflow.
  *
  * Authenticated by a shared secret rather than a session: there is no user
- * here. The blast radius of a leaked secret is a forced early cleanup of
- * already-expired objects, not data loss - nothing within its retention window
- * can be touched through this endpoint.
+ * here. The blast radius of a leaked secret is an early close of already-stale
+ * sessions - no data is deleted through this endpoint.
  */
 export async function POST(req: NextRequest) {
   const secret = process.env.CRON_SECRET

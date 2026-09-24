@@ -7,7 +7,7 @@ import clsx from 'clsx'
 import {
   LayoutDashboard, Building2, ClipboardList, BookOpen,
   Users, UserCheck, Briefcase, FileText, Settings, LogOut,
-  ChevronRight, Filter, Upload, ShieldCheck
+  ChevronRight, Filter, Upload
 } from 'lucide-react'
 
 const navItems = [
@@ -20,7 +20,6 @@ const navItems = [
   { href: '/admin/job-openings', label: 'Job Openings', icon: Briefcase },
   { href: '/admin/results', label: 'Results & Reports', icon: FileText },
   { href: '/admin/shortlist', label: 'Shortlist Criteria', icon: Filter },
-  { href: '/admin/proctoring', label: 'Proctoring Usage', icon: ShieldCheck },
   { href: '/admin/settings', label: 'Settings', icon: Settings },
 ]
 
