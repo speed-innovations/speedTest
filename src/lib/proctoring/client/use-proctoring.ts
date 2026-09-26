@@ -8,8 +8,8 @@ import { UploadQueue, type QueueItem, type QueueSummary } from './upload-queue'
 import { WebcamRecorder } from './webcam-recorder'
 import { ScreenCapture } from './screen-capture'
 import { GazeMonitor } from './gaze-monitor'
-import type { GazeThresholds } from './gaze-classify'
-import type { GazeWarning } from './gaze-state'
+import type { PipelineOutput } from './detection-pipeline'
+import { WARNING_COPY as DETECTION_WARNING_COPY } from './warning-copy'
 
 /**
  * The single integration point between the proctoring services and React.
@@ -68,18 +68,6 @@ export interface UseProctoringResult {
   videoRef: React.RefObject<HTMLVideoElement>
 }
 
-/**
- * Gaze thresholds are not part of the server's session config - they are
- * classifier tuning, not capture parameters, and retuning them needs the test
- * fixtures in gaze-classify's suite rather than an env var nobody can validate.
- */
-const DEFAULT_GAZE_THRESHOLDS: GazeThresholds = {
-  yawDeg: 20,
-  pitchDeg: 15,
-  irisRatio: 0.18,
-  hysteresisDeg: 5,
-}
-
 /** Queue bound. A segment is several megabytes, so this is a memory ceiling. */
 const MAX_QUEUED_UPLOADS = 16
 const UPLOAD_MAX_RETRIES = 3
@@ -96,13 +84,7 @@ const WARNING_VISIBLE_MS = 4000
 const FINALIZE_DRAIN_TIMEOUT_MS = 8000
 
 const WARNING_COPY: Record<string, string> = {
-  GAZE_LEFT: 'Please look at the assessment screen.',
-  GAZE_RIGHT: 'Please look at the assessment screen.',
-  GAZE_UP: 'Please look at the assessment screen.',
-  GAZE_DOWN: 'Please look at the assessment screen.',
-  FACE_NOT_DETECTED: 'Please position your face clearly in front of the camera.',
-  MULTIPLE_FACES_DETECTED:
-    'More than one face was detected. Please ensure you are the only person visible.',
+  ...DETECTION_WARNING_COPY,
   UPLOAD_FAILURE:
     "We're having trouble saving assessment evidence. Please check your internet connection.",
 }
@@ -660,22 +642,11 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
         await inference.play().catch(() => undefined)
 
         const monitor = await GazeMonitor.create({
-          thresholds: DEFAULT_GAZE_THRESHOLDS,
-          gazeWarningMs: cfg.gazeWarningMs,
-          gazeWarningCooldownMs: cfg.gazeWarningCooldownMs,
-          faceMissingWarningMs: cfg.faceMissingWarningMs,
-          multipleFacesWarningMs: cfg.multipleFacesWarningMs,
-          onWarning: (w: GazeWarning) => {
-            showWarning(w.type)
-            queueEvent(w.type, {
-              direction: w.direction ?? undefined,
-              durationMs: w.durationMs,
-              severity: 'WARN',
+          onOutput: (out: PipelineOutput) => {
+            out.warnings.forEach(kind => showWarning(kind))
+            out.events.forEach(e => {
+              queueEvent(e.type, { direction: e.direction, durationMs: e.durationMs, severity: 'WARN' })
             })
-          },
-          onError: () => {
-            // Inference failures are not the candidate's problem and must not
-            // interrupt them. Recording and screenshots continue regardless.
           },
         })
         gazeRef.current = monitor

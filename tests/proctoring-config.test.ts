@@ -8,8 +8,6 @@ import { getProctoringConfig, resetProctoringConfigForTests } from '@/lib/procto
 
 const KEYS = [
   'PROCTORING_ENABLED', 'PROCTORING_OPERATIONAL', 'PROCTORING_RETENTION_HOURS',
-  'PROCTORING_GAZE_WARNING_MS', 'PROCTORING_GAZE_WARNING_COOLDOWN_MS',
-  'PROCTORING_FACE_MISSING_WARNING_MS', 'PROCTORING_MULTIPLE_FACES_WARNING_MS',
   'PROCTORING_SCREEN_REQUIRED', 'PROCTORING_HEARTBEAT_INTERVAL_MS', 'PROCTORING_STALE_SESSION_MS',
   'PROCTORING_STORAGE_PROVIDER', 'R2_ACCOUNT_ID', 'R2_BUCKET_NAME', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY',
 ]
@@ -75,5 +73,10 @@ describe('getProctoringConfig', () => {
     expect(c.enabled).toBe(true)
     expect(Object.keys(c)).not.toContain('storageProvider')
     expect(Object.keys(c).join(',')).not.toMatch(/storage|bytes|r2/i)
+  })
+
+  it('carries no detection threshold at all', () => {
+    expect(Object.keys(getProctoringConfig()).join(',')).not.toMatch(/gaze|warning|face/i)
+    expect(getProctoringConfig().version).toBe('2')
   })
 })

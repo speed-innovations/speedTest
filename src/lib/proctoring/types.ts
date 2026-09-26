@@ -10,7 +10,7 @@ export type AttemptKind = 'scheduled' | 'walkin'
 
 export type GazeDirection =
   | 'CENTER' | 'LEFT' | 'RIGHT' | 'UP' | 'DOWN'
-  | 'FACE_MISSING' | 'FACE_NOT_DETECTED' | 'MULTIPLE_FACES' | 'UNCERTAIN'
+  | 'FACE_MISSING' | 'MULTIPLE_FACES' | 'UNCERTAIN'
 
 export type ProctoringClientState =
   | 'IDLE' | 'CHECKING_DEVICES' | 'AWAITING_PERMISSION' | 'READY'

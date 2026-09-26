@@ -19,13 +19,9 @@ export async function POST(req: NextRequest) {
       status: session.status,
       version: session.version,
       retentionExpiresAt: session.retentionExpiresAt,
-      // Client capture parameters come from the server so a deploy can retune
-      // them without shipping new client code.
+      // Operational parameters only. Detection thresholds are deliberately
+      // not sent: a candidate must not be able to read them off the network tab.
       config: {
-        gazeWarningMs: cfg.gazeWarningMs,
-        gazeWarningCooldownMs: cfg.gazeWarningCooldownMs,
-        faceMissingWarningMs: cfg.faceMissingWarningMs,
-        multipleFacesWarningMs: cfg.multipleFacesWarningMs,
         heartbeatIntervalMs: cfg.heartbeatIntervalMs,
         screenRequired: cfg.screenRequired,
       },

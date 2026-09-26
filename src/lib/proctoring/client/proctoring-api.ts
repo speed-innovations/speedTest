@@ -24,10 +24,6 @@ export interface SessionConfig {
   videoSegmentMs: number
   videoBitsPerSecond: number
   audioBitsPerSecond: number
-  gazeWarningMs: number
-  gazeWarningCooldownMs: number
-  faceMissingWarningMs: number
-  multipleFacesWarningMs: number
   maxScreenshotBytes: number
   heartbeatIntervalMs: number
   screenRequired: boolean

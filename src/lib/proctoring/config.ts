@@ -6,9 +6,13 @@ import { z } from 'zod'
  * Metadata-only: proctoring stores no media, so there is no storage provider,
  * no byte budget and no credential here - and a deployment with none of those
  * set runs proctoring normally. Every value has a default.
+ *
+ * Detection thresholds are not here. They are client tuning in
+ * client/detection-config.ts, and must never appear in an API response.
  */
 
-export const PROCTORING_VERSION = '1'
+// Bumped: detection moved to fusion + temporal engine (live-monitoring phase).
+export const PROCTORING_VERSION = '2'
 
 /**
  * Coerce "true"/"1" to true; anything else uses the default.
@@ -28,11 +32,6 @@ const schema = z.object({
   PROCTORING_OPERATIONAL: bool(true),
   PROCTORING_RETENTION_HOURS: int(72, 1, 720),
 
-  PROCTORING_GAZE_WARNING_MS: int(1_500, 200, 30_000),
-  PROCTORING_GAZE_WARNING_COOLDOWN_MS: int(10_000, 1_000, 120_000),
-  PROCTORING_FACE_MISSING_WARNING_MS: int(3_000, 500, 60_000),
-  PROCTORING_MULTIPLE_FACES_WARNING_MS: int(3_000, 500, 60_000),
-
   PROCTORING_SCREEN_REQUIRED: bool(true),
   PROCTORING_HEARTBEAT_INTERVAL_MS: int(20_000, 5_000, 120_000),
   // A session with no heartbeat for this long is treated as abandoned.
@@ -43,10 +42,6 @@ export interface ProctoringConfig {
   enabled: boolean
   operational: boolean
   retentionHours: number
-  gazeWarningMs: number
-  gazeWarningCooldownMs: number
-  faceMissingWarningMs: number
-  multipleFacesWarningMs: number
   screenRequired: boolean
   heartbeatIntervalMs: number
   staleSessionMs: number
@@ -67,10 +62,6 @@ export function getProctoringConfig(): ProctoringConfig {
     enabled: e.PROCTORING_ENABLED,
     operational: e.PROCTORING_OPERATIONAL,
     retentionHours: e.PROCTORING_RETENTION_HOURS,
-    gazeWarningMs: e.PROCTORING_GAZE_WARNING_MS,
-    gazeWarningCooldownMs: e.PROCTORING_GAZE_WARNING_COOLDOWN_MS,
-    faceMissingWarningMs: e.PROCTORING_FACE_MISSING_WARNING_MS,
-    multipleFacesWarningMs: e.PROCTORING_MULTIPLE_FACES_WARNING_MS,
     screenRequired: e.PROCTORING_SCREEN_REQUIRED,
     heartbeatIntervalMs: e.PROCTORING_HEARTBEAT_INTERVAL_MS,
     staleSessionMs: e.PROCTORING_STALE_SESSION_MS,

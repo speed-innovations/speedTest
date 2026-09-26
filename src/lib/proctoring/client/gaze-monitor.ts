@@ -1,212 +1,189 @@
 import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision'
-import { classifyGaze, extractSignals, type GazeBaseline, type GazeThresholds } from './gaze-classify'
-import { GazeStateMachine, type GazeWarning } from './gaze-state'
-import type { GazeDirection } from '../types'
+import { extractFrameSignals } from './gaze-classify'
+import { DetectionPipeline, type DetectionEvent, type PipelineOutput } from './detection-pipeline'
+import { DETECTION_CONFIG, type DetectionConfig } from './detection-config'
 
 /**
- * The only file that touches MediaPipe.
- *
- * It owns the model, the video element and the loop, and contains no thresholds
- * and no decisions - those live in gaze-classify.ts and gaze-state.ts, which are
- * pure and fully tested. This shell is deliberately thin because it is the part
- * that cannot be tested without a browser and a camera.
+ * The only file that touches MediaPipe: it owns the model, the video element
+ * and the frame loop. It contains no thresholds and makes no decisions - those
+ * are in the pure pipeline, which is fully tested.
  *
  * Nothing here makes a network call. Frames are analysed in the tab and
- * discarded; no image, no landmark and no baseline ever leaves the browser.
+ * discarded. No image, landmark or baseline ever leaves the browser.
  */
 
 export interface GazeMonitorOptions {
-  thresholds: GazeThresholds
-  gazeWarningMs: number
-  gazeWarningCooldownMs: number
-  faceMissingWarningMs: number
-  multipleFacesWarningMs: number
-  onWarning: (w: GazeWarning) => void
-  /** Every classified frame, for a live indicator. Called often - keep it cheap. */
-  onDirection?: (d: GazeDirection) => void
+  config?: DetectionConfig
+  /** Every inferred frame. Called ~6 times a second - keep it cheap. */
+  onOutput: (out: PipelineOutput) => void
   onError?: (err: unknown) => void
-  /** Inference rate. ~6 FPS shares the thread civilly with the exam UI. */
-  targetFps?: number
   /** Where the vendored WASM and model live. Never a CDN. */
   assetBasePath?: string
 }
 
-/** Frames collected before a baseline is accepted, at ~6 FPS. */
-const BASELINE_MIN_SAMPLES = 12
-/** How long baseline collection may run before it gives up and uses what it has. */
-const BASELINE_WINDOW_MS = 3000
+type FrameVideo = HTMLVideoElement & {
+  requestVideoFrameCallback?: (cb: () => void) => number
+  cancelVideoFrameCallback?: (handle: number) => void
+}
+
+/** How long to wait for a first video-frame callback before using rAF instead. */
+const RVFC_WATCHDOG_MS = 1000
 
 export class GazeMonitor {
-  private landmarker: FaceLandmarker | null = null
-  private video: HTMLVideoElement | null = null
-  private rafId: number | null = null
+  private landmarker: FaceLandmarker | null
+  private video: FrameVideo | null = null
+  private handle: number | null = null
+  private handleKind: 'rvfc' | 'raf' | null = null
+  private useRvfc = false
+  private sawFrame = false
+  private watchdog: ReturnType<typeof setTimeout> | null = null
   private running = false
-  private lastInferenceAt = 0
+  private busy = false
+  private lastInferenceAt = -Infinity
+  private lastTimestamp = 0
   private readonly frameIntervalMs: number
+  private readonly config: DetectionConfig
+  private readonly pipeline: DetectionPipeline
 
-  private state: GazeStateMachine
-  private previous: GazeDirection = 'CENTER'
-
-  private baseline: GazeBaseline | null = null
-  private baselineSamples: Array<{ yaw: number; pitch: number }> = []
-  private baselineStartedAt = 0
-
-  private constructor(
-    landmarker: FaceLandmarker,
-    private readonly opts: GazeMonitorOptions
-  ) {
+  private constructor(landmarker: FaceLandmarker, private readonly opts: GazeMonitorOptions) {
     this.landmarker = landmarker
-    this.frameIntervalMs = 1000 / (opts.targetFps ?? 6)
-    this.state = new GazeStateMachine({
-      gazeWarningMs: opts.gazeWarningMs,
-      cooldownMs: opts.gazeWarningCooldownMs,
-      faceMissingMs: opts.faceMissingWarningMs,
-      multipleFacesMs: opts.multipleFacesWarningMs,
-    })
+    this.config = opts.config ?? DETECTION_CONFIG
+    this.frameIntervalMs = 1000 / this.config.targetFps
+    this.pipeline = new DetectionPipeline(this.config)
   }
 
   /**
-   * Load the model from our own origin.
+   * Load the model from our own origin. A blocked CDN would otherwise break
+   * proctoring after the candidate has granted permissions.
    *
-   * Self-hosted deliberately: the default CDN fetch means a blocked or slow CDN
-   * breaks proctoring mid-assessment, after the candidate has granted
-   * permissions and the clock has started.
-   *
-   * Single-threaded WASM only. The app sets no COOP/COEP headers, so
-   * SharedArrayBuffer is unavailable and the threaded build cannot run; adding
-   * those headers would change behaviour app-wide and is out of scope here.
+   * Single-threaded WASM only: the app sets no COOP/COEP headers, so the
+   * threaded build cannot run. GPU first, CPU if the GPU delegate cannot
+   * initialise (no WebGL, blocklisted driver).
    */
   static async create(opts: GazeMonitorOptions): Promise<GazeMonitor> {
     const base = opts.assetBasePath ?? '/mediapipe'
     const fileset = await FilesetResolver.forVisionTasks(`${base}/wasm`)
-    const landmarker = await FaceLandmarker.createFromOptions(fileset, {
-      baseOptions: {
-        modelAssetPath: `${base}/face_landmarker.task`,
-        delegate: 'GPU',
-      },
-      runningMode: 'VIDEO',
-      // Two, not one: detecting a second person is the point. More than two
-      // costs inference time for no extra signal - two already means "not alone".
+    const options = (delegate: 'GPU' | 'CPU') => ({
+      baseOptions: { modelAssetPath: `${base}/face_landmarker.task`, delegate },
+      runningMode: 'VIDEO' as const,
+      // Two, not one: a second person is the point. More costs time for no signal.
       numFaces: 2,
       outputFacialTransformationMatrixes: true,
-      // Blendshapes are unused here and cost time on every frame.
       outputFaceBlendshapes: false,
     })
+    let landmarker: FaceLandmarker
+    try {
+      landmarker = await FaceLandmarker.createFromOptions(fileset, options('GPU'))
+    } catch {
+      landmarker = await FaceLandmarker.createFromOptions(fileset, options('CPU'))
+    }
     return new GazeMonitor(landmarker, opts)
   }
 
   start(video: HTMLVideoElement): void {
-    if (this.running) return
+    if (this.running || !this.landmarker) return
     this.running = true
-    this.video = video
-    this.baseline = null
-    this.baselineSamples = []
-    this.baselineStartedAt = performance.now()
-    this.state.reset()
-    this.previous = 'CENTER'
-    this.loop()
-  }
-
-  /**
-   * One rAF loop with a timestamp gate, rather than one inference per frame.
-   *
-   * rAF fires at the display's rate - 60 Hz or more - and each inference is tens
-   * of milliseconds on the same thread as the exam UI. Gating to ~6 FPS is what
-   * keeps answering questions responsive while proctoring runs.
-   */
-  private loop = (): void => {
-    if (!this.running) return
-    this.rafId = requestAnimationFrame(this.loop)
-
-    const video = this.video
-    if (!video || video.readyState < 2) return
-
-    const now = performance.now()
-    if (now - this.lastInferenceAt < this.frameIntervalMs) return
-    this.lastInferenceAt = now
-
-    try {
-      const result = this.landmarker?.detectForVideo(video, now)
-      if (!result) return
-
-      const signals = extractSignals(result)
-      if (!signals) return
-
-      if (!this.baseline) {
-        this.collectBaseline(signals, now)
-        // Until a baseline exists there is nothing to measure deviation
-        // against, so no classification and no warnings.
-        return
-      }
-
-      const direction = classifyGaze(signals, this.baseline, this.opts.thresholds, this.previous)
-      this.previous = direction
-      this.opts.onDirection?.(direction)
-
-      const warning = this.state.observe(direction, now)
-      if (warning) this.opts.onWarning(warning)
-    } catch (err) {
-      this.opts.onError?.(err)
+    this.video = video as FrameVideo
+    this.pipeline.reset()
+    this.lastInferenceAt = -Infinity
+    this.useRvfc = typeof this.video.requestVideoFrameCallback === 'function'
+    this.sawFrame = false
+    this.schedule()
+    if (this.useRvfc) {
+      this.watchdog = setTimeout(() => {
+        this.watchdog = null
+        if (!this.running || this.sawFrame) return
+        // Some engines deliver no video-frame callbacks for an element that is
+        // not in the document. Fall back rather than silently never inferring.
+        this.cancelScheduled()
+        this.useRvfc = false
+        this.schedule()
+      }, RVFC_WATCHDOG_MS)
     }
   }
 
-  /**
-   * Accept a neutral baseline from the first few seconds.
-   *
-   * This assumes the candidate is looking at the screen just after starting,
-   * which is usually but not always true - a skewed baseline persists for the
-   * whole session. Frames with no face, or with more than one, are discarded so
-   * at least the samples are of a single visible face. The honest mitigation is
-   * not technical: gaze never auto-fails anyone, and a human reads the evidence.
-   *
-   * The baseline stays in memory for the session. It is never uploaded and
-   * never persisted.
-   */
-  private collectBaseline(
-    signals: { yaw: number; pitch: number; faceCount: number },
-    now: number
-  ): void {
-    if (signals.faceCount === 1 && Number.isFinite(signals.yaw) && Number.isFinite(signals.pitch)) {
-      this.baselineSamples.push({ yaw: signals.yaw, pitch: signals.pitch })
-    }
-
-    const enoughSamples = this.baselineSamples.length >= BASELINE_MIN_SAMPLES
-    const windowElapsed = now - this.baselineStartedAt >= BASELINE_WINDOW_MS
-    if (!enoughSamples && !windowElapsed) return
-    if (this.baselineSamples.length === 0) {
-      // No usable frame at all in the window - the candidate may be off-camera.
-      // Restart the window rather than baselining on nothing.
-      this.baselineStartedAt = now
-      return
-    }
-
-    // Median, not mean: one frame of the candidate glancing away during
-    // calibration would drag a mean and skew the entire session.
-    this.baseline = {
-      yaw: median(this.baselineSamples.map(s => s.yaw)),
-      pitch: median(this.baselineSamples.map(s => s.pitch)),
-    }
-    this.baselineSamples = []
+  /** Close the episode in progress. Call before stop(): stop resets the pipeline. */
+  flush(): DetectionEvent[] {
+    return this.pipeline.flush(performance.now())
   }
 
   stop(): void {
     this.running = false
-    if (this.rafId !== null) {
-      cancelAnimationFrame(this.rafId)
-      this.rafId = null
+    if (this.watchdog !== null) {
+      clearTimeout(this.watchdog)
+      this.watchdog = null
     }
-    this.landmarker?.close()
+    this.cancelScheduled()
+    try {
+      this.landmarker?.close()
+    } catch {
+      // A model that failed mid-load has nothing to release.
+    }
     this.landmarker = null
     this.video = null
+    this.pipeline.reset()
   }
 
-  get hasBaseline(): boolean {
-    return this.baseline !== null
+  get isRunning(): boolean {
+    return this.running
   }
-}
 
-function median(values: number[]): number {
-  const sorted = values.slice().sort((a, b) => a - b)
-  const mid = Math.floor(sorted.length / 2)
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+  /**
+   * One callback in flight at a time. requestVideoFrameCallback fires once
+   * per decoded frame, which is cheaper than rAF at 60+ Hz. Either way the
+   * timestamp gate below keeps inference at the target rate.
+   */
+  private schedule(): void {
+    const v = this.video
+    if (!this.running || !v || this.handle !== null) return
+    if (this.useRvfc && v.requestVideoFrameCallback) {
+      this.handleKind = 'rvfc'
+      this.handle = v.requestVideoFrameCallback(this.tick)
+    } else {
+      this.handleKind = 'raf'
+      this.handle = requestAnimationFrame(this.tick)
+    }
+  }
+
+  private cancelScheduled(): void {
+    if (this.handle === null) return
+    if (this.handleKind === 'rvfc' && this.video && this.video.cancelVideoFrameCallback) {
+      this.video.cancelVideoFrameCallback(this.handle)
+    } else if (this.handleKind === 'raf') {
+      cancelAnimationFrame(this.handle)
+    }
+    this.handle = null
+    this.handleKind = null
+  }
+
+  private tick = (): void => {
+    this.handle = null
+    this.handleKind = null
+    if (!this.running) return
+    this.sawFrame = true
+    this.infer()
+    this.schedule()
+  }
+
+  private infer(): void {
+    const video = this.video
+    const landmarker = this.landmarker
+    // `busy` guards re-entrancy: never two inferences at once.
+    if (!video || !landmarker || this.busy || video.readyState < 2) return
+    const now = performance.now()
+    if (now - this.lastInferenceAt < this.frameIntervalMs) return
+    this.lastInferenceAt = now
+    // detectForVideo requires strictly increasing timestamps.
+    const ts = now > this.lastTimestamp ? now : this.lastTimestamp + 1
+    this.lastTimestamp = ts
+    this.busy = true
+    try {
+      const result = landmarker.detectForVideo(video, ts)
+      this.opts.onOutput(this.pipeline.process(extractFrameSignals(result, this.config.signs), now))
+    } catch (err) {
+      this.opts.onError?.(err)
+    } finally {
+      this.busy = false
+    }
+  }
 }
