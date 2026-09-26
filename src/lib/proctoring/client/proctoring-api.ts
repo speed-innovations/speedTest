@@ -101,6 +101,8 @@ export const proctoringApi = {
     accepted: number
     duplicates: number
     capped: boolean
+    /** The live session id, or null when the session is closed and nothing was stored. */
+    session: string | null
   }>> {
     return post('/api/student/proctoring/events', { ...ref, sessionId, events }, { keepalive: !!opts.keepalive })
   },

@@ -146,9 +146,9 @@ export default function ProctoringSetup({
       </div>
 
       {/*
-        The storage limit is a routine state at the configured budget, not a
-        crash. It gets the calm sentence and no internal reason - the candidate
-        can do nothing about a bucket being full, and a code would only alarm.
+        Proctoring is unavailable: disabled, or not operational right now. It
+        gets the calm sentence and no internal reason - the candidate can do
+        nothing about it, and a server code would only alarm.
       */}
       {unavailable && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">

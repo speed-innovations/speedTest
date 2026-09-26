@@ -96,6 +96,14 @@ const MAX_EVENT_DURATION_MS = 14_400_000
  * must not sit at LOADING forever while the server hears STARTING.
  */
 const GAZE_ERROR_LIMIT = 10
+/**
+ * The server's heartbeat interval is clamped before use: 0, a negative or a
+ * missing value must never become a tight request loop, and a huge one must
+ * not let the stale-session sweep close a healthy session.
+ */
+const HEARTBEAT_INTERVAL_MIN_MS = 5_000
+const HEARTBEAT_INTERVAL_MAX_MS = 60_000
+const HEARTBEAT_INTERVAL_DEFAULT_MS = 20_000
 
 const IDLE_DEVICE: DeviceStatus = { state: 'IDLE' }
 const INITIAL_HEALTH: ProctoringHealth = {
@@ -154,6 +162,11 @@ function captureFrom(h: ProctoringHealth): CaptureState {
   }
 }
 
+export function clampHeartbeatInterval(ms: unknown): number {
+  if (typeof ms !== 'number' || !isFinite(ms)) return HEARTBEAT_INTERVAL_DEFAULT_MS
+  return Math.min(HEARTBEAT_INTERVAL_MAX_MS, Math.max(HEARTBEAT_INTERVAL_MIN_MS, Math.round(ms)))
+}
+
 /** Race a promise against a timer, and clear the timer either way. */
 function withTimeout(p: Promise<void>, ms: number): Promise<void> {
   return new Promise(resolve => {
@@ -201,6 +214,12 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
   const startedAtRef = useRef(0)
   const startingRef = useRef(false)
   const finalizedRef = useRef(false)
+  /** Set by the unmount cleanup; every async continuation checks it. */
+  const unmountedRef = useRef(false)
+  /** One of each resume at a time: a double click must not race itself. */
+  const resumingScreenRef = useRef(false)
+  const resumingCameraRef = useRef(false)
+  const resumingSessionRef = useRef(false)
   /** The monitor's own video element, deliberately off-DOM. */
   const inferenceVideoRef = useRef<HTMLVideoElement | null>(null)
   /** The visible self-view. Never what inference reads from. */
@@ -434,10 +453,21 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
   teardownRef.current = teardown
 
   useEffect(() => {
+    // Reset on (re)mount: StrictMode runs this effect's cleanup once in
+    // development before mounting again.
+    unmountedRef.current = false
     return () => {
+      unmountedRef.current = true
       teardownRef.current?.()
     }
   }, [])
+
+  /**
+   * True once the page instance is gone or has submitted. Checked after every
+   * await in start and resume: the continuation of a prompt or request that
+   * settled late must not bring monitoring back up after teardown.
+   */
+  const isCancelled = useCallback(() => unmountedRef.current || finalizedRef.current, [])
 
   /**
    * Keep the visible self-view bound to the camera stream. No dependency
@@ -476,11 +506,20 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
     const sessionId = sessionIdRef.current
     if (!ref || !sessionId) return false
     const res = await proctoringApi.sendEvents(ref, sessionId, batch, o)
-    if (res.ok) return true
+    if (res.ok) {
+      // A 200 with no live session means nothing was stored: the server
+      // closed the session (stale heartbeat) and reopens the same id on
+      // resume. Keep the batch - ids are idempotent - and surface the loss.
+      if (res.data.session === null && !finalizedRef.current) {
+        if (!unmountedRef.current) dispatch('SESSION_LOST')
+        return false
+      }
+      return true
+    }
     // A 4xx other than 429 is a permanent refusal. Resending it would loop,
     // so the batch is let go.
     return res.status >= 400 && res.status < 500 && res.status !== 429
-  }, [])
+  }, [dispatch])
 
   const sendHeartbeat = useCallback(async () => {
     const ref = attemptRefRef.current
@@ -497,7 +536,7 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
       clientTimestamp: new Date().toISOString(),
       droppedEvents: queueRef.current ? queueRef.current.dropped : 0,
     })
-    if (finalizedRef.current) return
+    if (finalizedRef.current || unmountedRef.current) return
     if (!res.ok) {
       if (res.status === 404 || res.status === 409) {
         dispatch('SESSION_LOST')
@@ -520,7 +559,7 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
 
   const startTimers = useCallback((heartbeatIntervalMs: number) => {
     clearTimers()
-    heartbeatTimerRef.current = setInterval(() => { void sendHeartbeat() }, heartbeatIntervalMs)
+    heartbeatTimerRef.current = setInterval(() => { void sendHeartbeat() }, clampHeartbeatInterval(heartbeatIntervalMs))
     eventTimerRef.current = setInterval(() => { void queueRef.current?.flush() }, EVENT_FLUSH_INTERVAL_MS)
   }, [clearTimers, sendHeartbeat])
 
@@ -549,7 +588,8 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
   }, [])
 
   const requestPermissionsAndStart = useCallback(async (): Promise<boolean> => {
-    if (!enabled || startingRef.current) return false
+    // A finalized page instance never restarts monitoring.
+    if (!enabled || startingRef.current || isCancelled()) return false
     const ref = attemptRefRef.current
     if (!ref) {
       setStartError({ message: 'This assessment is not ready yet. Please reload the page.' })
@@ -568,6 +608,10 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
       // Screen first: getDisplayMedia needs transient user activation, which
       // a first-time camera prompt can outlast.
       const screenStream = await acquireScreen()
+      if (isCancelled()) {
+        stopStream(screenStream)
+        return false
+      }
       if (!screenStream) {
         dispatch('PERMISSIONS_DENIED')
         return false
@@ -579,6 +623,10 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
       try {
         cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       } catch (err) {
+        if (isCancelled()) {
+          stopStream(screenStream)
+          return false
+        }
         const name = (err as { name?: string }).name
         const denied = name === 'NotAllowedError' || name === 'SecurityError'
         const missing = name === 'NotFoundError' || name === 'DevicesNotFoundError'
@@ -592,6 +640,12 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
         stopStream(screenStream)
         setScreen(IDLE_DEVICE)
         dispatch('PERMISSIONS_DENIED')
+        return false
+      }
+
+      if (isCancelled()) {
+        stopStream(cameraStream)
+        stopStream(screenStream)
         return false
       }
 
@@ -613,6 +667,17 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
       // Only now is a session created, so a denial never leaves one behind
       // for /start to accept.
       const started = await proctoringApi.startSession(ref)
+      if (isCancelled()) {
+        // Torn down (unmount or finalize) while the session was being opened.
+        // teardown() already stopped these through the refs; stopping again
+        // is harmless. Nothing else is touched.
+        stopStream(cameraStream)
+        stopStream(screenStream)
+        // Submitted meanwhile: close the session just opened, best effort.
+        // An unmount leaves it open so a reload can resume it.
+        if (started.ok && finalizedRef.current) void proctoringApi.finalize(ref)
+        return false
+      }
       if (!started.ok) {
         if (started.status === 503) {
           dispatch('PROCTORING_UNAVAILABLE')
@@ -627,7 +692,6 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
 
       sessionIdRef.current = started.data.sessionId
       startedAtRef.current = performance.now()
-      finalizedRef.current = false
       heartbeatFailuresRef.current = 0
       gateRef.current.reset()
       queueRef.current = new EventQueue({ send: sendBatch })
@@ -666,66 +730,102 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
       startingRef.current = false
     }
   }, [
-    acquireScreen, dispatch, enabled, enqueue, handleHealthChange, handleIntegrityEvent, patchHealth,
-    sendBatch, sendHeartbeat, startGaze, startTimers, support.supported, teardown, watchCameraTracks,
+    acquireScreen, dispatch, enabled, enqueue, handleHealthChange, handleIntegrityEvent, isCancelled,
+    patchHealth, sendBatch, sendHeartbeat, startGaze, startTimers, support.supported, teardown,
+    watchCameraTracks,
   ])
 
   /** From the candidate's click on the resume button: needs the gesture. */
   const resumeScreenShare = useCallback(async (): Promise<boolean> => {
-    const integrity = integrityRef.current
-    if (!sessionIdRef.current || !integrity) return false
-    const stream = await acquireScreen()
-    if (!stream) return false
-    stopStream(screenStreamRef.current)
-    screenStreamRef.current = stream
-    integrity.watchTrack('screen', stream.getVideoTracks()[0])
-    enqueue('SCREEN_SHARE_RESUMED', { metadata: { displaySurface: displaySurfaceOf(stream) } })
-    dispatch('SCREEN_SHARE_RESUMED')
-    return true
-  }, [acquireScreen, dispatch, enqueue])
+    if (resumingScreenRef.current || isCancelled()) return false
+    if (!sessionIdRef.current || !integrityRef.current) return false
+    resumingScreenRef.current = true
+    try {
+      const stream = await acquireScreen()
+      // Re-read after the await: a teardown meanwhile detached the monitor.
+      const integrity = integrityRef.current
+      if (isCancelled() || !integrity) {
+        stopStream(stream)
+        return false
+      }
+      if (!stream) return false
+      stopStream(screenStreamRef.current)
+      screenStreamRef.current = stream
+      integrity.watchTrack('screen', stream.getVideoTracks()[0])
+      enqueue('SCREEN_SHARE_RESUMED', { metadata: { displaySurface: displaySurfaceOf(stream) } })
+      dispatch('SCREEN_SHARE_RESUMED')
+      return true
+    } finally {
+      resumingScreenRef.current = false
+    }
+  }, [acquireScreen, dispatch, enqueue, isCancelled])
 
   const resumeCamera = useCallback(async (): Promise<boolean> => {
-    const integrity = integrityRef.current
-    if (!sessionIdRef.current || !integrity) return false
-    const before = healthRef.current
-    let stream: MediaStream
+    if (resumingCameraRef.current || isCancelled()) return false
+    if (!sessionIdRef.current || !integrityRef.current) return false
+    resumingCameraRef.current = true
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-    } catch {
-      setCamera({ state: 'FAILED', message: 'The camera could not be restarted. Please check it is connected and not in use by another app.' })
-      return false
+      const before = healthRef.current
+      let stream: MediaStream
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      } catch {
+        if (isCancelled()) return false
+        setCamera({ state: 'FAILED', message: 'The camera could not be restarted. Please check it is connected and not in use by another app.' })
+        return false
+      }
+      // Re-read after the await: a teardown meanwhile detached the monitor.
+      const integrity = integrityRef.current
+      if (isCancelled() || !integrity) {
+        stopStream(stream)
+        return false
+      }
+      if (stream.getVideoTracks().length === 0 || stream.getAudioTracks().length === 0) {
+        stopStream(stream)
+        return false
+      }
+      // A microphone-only recovery leaves inference running: keep the episode
+      // in progress before the restart below replaces the monitor.
+      stopGaze(true)
+      stopStream(cameraStreamRef.current)
+      cameraStreamRef.current = stream
+      watchCameraTracks(integrity, stream)
+      if (before.camera !== 'ACTIVE') enqueue('CAMERA_RESTORED', { metadata: { reason: 'reconnected' } })
+      if (before.microphone !== 'ACTIVE') enqueue('MICROPHONE_RESTORED', { metadata: { reason: 'reconnected' } })
+      setCamera({ state: 'READY' })
+      setMicrophone({ state: 'READY' })
+      dispatch('DEVICES_RECOVERED')
+      void startGaze(stream)
+      return true
+    } finally {
+      resumingCameraRef.current = false
     }
-    if (stream.getVideoTracks().length === 0 || stream.getAudioTracks().length === 0) {
-      stopStream(stream)
-      return false
-    }
-    stopStream(cameraStreamRef.current)
-    cameraStreamRef.current = stream
-    watchCameraTracks(integrity, stream)
-    if (before.camera !== 'ACTIVE') enqueue('CAMERA_RESTORED', { metadata: { reason: 'reconnected' } })
-    if (before.microphone !== 'ACTIVE') enqueue('MICROPHONE_RESTORED', { metadata: { reason: 'reconnected' } })
-    setCamera({ state: 'READY' })
-    setMicrophone({ state: 'READY' })
-    dispatch('DEVICES_RECOVERED')
-    void startGaze(stream)
-    return true
-  }, [dispatch, enqueue, startGaze, watchCameraTracks])
+  }, [dispatch, enqueue, isCancelled, startGaze, stopGaze, watchCameraTracks])
 
   /** The server closed the session (stale heartbeat). Reopen it - it resumes in place. */
   const resumeSession = useCallback(async (): Promise<boolean> => {
     const ref = attemptRefRef.current
-    if (!ref || finalizedRef.current) return false
-    const started = await proctoringApi.startSession(ref)
-    if (!started.ok) {
-      setStartError({ message: started.error, code: started.code })
-      return false
+    if (!ref || resumingSessionRef.current || isCancelled()) return false
+    resumingSessionRef.current = true
+    try {
+      const started = await proctoringApi.startSession(ref)
+      if (isCancelled()) return false
+      if (!started.ok) {
+        setStartError({ message: started.error, code: started.code })
+        return false
+      }
+      sessionIdRef.current = started.data.sessionId
+      setStartError(null)
+      dispatch('SESSION_RESUMED')
+      void sendHeartbeat()
+      // Deliver what was held while the session was closed, now rather than
+      // on the next timer tick.
+      void queueRef.current?.flush()
+      return true
+    } finally {
+      resumingSessionRef.current = false
     }
-    sessionIdRef.current = started.data.sessionId
-    setStartError(null)
-    dispatch('SESSION_RESUMED')
-    void sendHeartbeat()
-    return true
-  }, [dispatch, sendHeartbeat])
+  }, [dispatch, isCancelled, sendHeartbeat])
 
   const finalize = useCallback(async (): Promise<void> => {
     if (!enabled || finalizedRef.current) return

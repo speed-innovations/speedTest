@@ -30,7 +30,7 @@ vi.mock('@/lib/proctoring/client/gaze-monitor', () => ({
   },
 }))
 
-import { useProctoring } from '@/lib/proctoring/client/use-proctoring'
+import { useProctoring, clampHeartbeatInterval } from '@/lib/proctoring/client/use-proctoring'
 
 const SESSION_URL = '/api/student/proctoring/session'
 const EVENTS_URL = '/api/student/proctoring/events'
@@ -71,6 +71,7 @@ let cameraTracks: FakeTrack[]
 let screenTracks: FakeTrack[]
 let fetchMock: ReturnType<typeof vi.fn>
 let heartbeatReply: () => Promise<Response>
+let eventsReply: () => Promise<Response>
 
 const OPTIONS = {
   enabled: true, attemptId: 'attempt1', kind: 'scheduled' as const,
@@ -114,6 +115,7 @@ beforeEach(() => {
   })
   HTMLVideoElement.prototype.play = vi.fn(() => Promise.resolve())
   heartbeatReply = () => json({ ok: true, session: { sessionId: 's1', status: 'ACTIVE' } })
+  eventsReply = () => json({ accepted: 1, duplicates: 0, capped: false, session: 's1' })
   fetchMock = vi.fn((url: string) => {
     const u = String(url)
     if (u.indexOf(SESSION_URL) === 0) {
@@ -125,7 +127,7 @@ beforeEach(() => {
     }
     if (u.indexOf(HEARTBEAT_URL) === 0) return heartbeatReply()
     if (u.indexOf(FINALIZE_URL) === 0) return json({ ok: true, alreadyFinalized: false })
-    return json({ accepted: 1, duplicates: 0, capped: false })
+    return eventsReply()
   })
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -317,15 +319,114 @@ describe('useProctoring: detection output', () => {
 })
 
 describe('useProctoring: gaze failure', () => {
-  it('ten consecutive inference errors mark gaze UNAVAILABLE and report it once', async () => {
+  it('only ten consecutive inference errors mark gaze UNAVAILABLE, reported once', async () => {
     const { result } = await started()
     await waitFor(() => expect(gaze.onError).not.toBeNull())
+    const fail = (n: number) => { for (let i = 0; i < n; i++) gaze.onError!(new Error('inference failed')) }
+    act(() => { fail(9) })
+    expect(result.current.health.gaze).not.toBe('UNAVAILABLE')
+    // A good frame resets the run: 9 more are still short of the limit.
     act(() => {
-      for (let i = 0; i < 10; i++) gaze.onError!(new Error('inference failed'))
+      gaze.onOutput!({ phase: 'MONITORING', warnings: [], events: [] })
+      fail(9)
     })
+    expect(result.current.health.gaze).not.toBe('UNAVAILABLE')
+    act(() => { fail(12) })
     expect(result.current.health.gaze).toBe('UNAVAILABLE')
     await act(async () => { await result.current.finalize() })
     expect(sentTypes().filter(t => t === 'GAZE_MONITOR_UNAVAILABLE').length).toBe(1)
+  })
+})
+
+describe('useProctoring: cancellation', () => {
+  it('unmount while the camera prompt is pending stops every track and sends nothing afterwards', async () => {
+    let resolveCamera: (s: MediaStream) => void = () => undefined
+    ;(navigator.mediaDevices.getUserMedia as Fn).mockImplementation(
+      () => new Promise<MediaStream>(r => { resolveCamera = r })
+    )
+    const hook = renderHook(() => useProctoring(OPTIONS))
+    let pending: Promise<boolean> = Promise.resolve(true)
+    act(() => { pending = hook.result.current.requestPermissionsAndStart() })
+    await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalled())
+    hook.unmount()
+    resolveCamera(fakeStream(cameraTracks))
+    expect(await pending).toBe(false)
+    cameraTracks.concat(screenTracks).forEach(t => expect(t.stop).toHaveBeenCalled())
+    await new Promise(r => setTimeout(r, 50))
+    // Not even a session: the start never got that far.
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('finalize while the session is being opened wins: COMPLETED, tracks stopped, no heartbeat loop', async () => {
+    const normal = fetchMock.getMockImplementation()!
+    let resolveSession: (r: Response) => void = () => undefined
+    fetchMock.mockImplementation((url: string) =>
+      String(url).indexOf(SESSION_URL) === 0
+        ? new Promise<Response>(r => { resolveSession = r })
+        : normal(url))
+    const { result } = renderHook(() => useProctoring(OPTIONS))
+    let pending: Promise<boolean> = Promise.resolve(true)
+    act(() => { pending = result.current.requestPermissionsAndStart() })
+    await waitFor(() => expect(callsTo(SESSION_URL).length).toBe(1))
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    await act(async () => { await result.current.finalize() })
+    await act(async () => {
+      resolveSession(new Response(JSON.stringify({
+        sessionId: 's1', status: 'ACTIVE', version: '2', resumed: false,
+        retentionExpiresAt: new Date().toISOString(),
+        config: { heartbeatIntervalMs: 20_000, screenRequired: true },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      expect(await pending).toBe(false)
+    })
+    expect(result.current.state).toBe('COMPLETED')
+    cameraTracks.concat(screenTracks).forEach(t => expect(t.stop).toHaveBeenCalled())
+    expect(vi.getTimerCount()).toBe(0)
+    await act(async () => { vi.advanceTimersByTime(120_000) })
+    expect(callsTo(HEARTBEAT_URL).length).toBe(0)
+    expect(callsTo(EVENTS_URL).length).toBe(0)
+    // The session that opened late is closed rather than left dangling.
+    await waitFor(() => expect(callsTo(FINALIZE_URL).length).toBe(1))
+  })
+
+  it('a second resume while one is pending returns false at once', async () => {
+    const { result } = await started()
+    const [a, b] = await act(async () => Promise.all([result.current.resumeSession(), result.current.resumeSession()]))
+    expect(a).toBe(true)
+    expect(b).toBe(false)
+    expect(callsTo(SESSION_URL).length).toBe(2)
+  })
+})
+
+describe('useProctoring: interrupted session', () => {
+  it('keeps events refused by a closed session and delivers them after resume', async () => {
+    eventsReply = () => json({ accepted: 0, duplicates: 0, capped: false, session: null })
+    const { result } = await started()
+    await act(async () => { window.dispatchEvent(new Event('online')) })
+    await waitFor(() => expect(result.current.state).toBe('SESSION_INTERRUPTED'))
+
+    const from = fetchMock.mock.calls.length
+    eventsReply = () => json({ accepted: 2, duplicates: 0, capped: false, session: 's1' })
+    await act(async () => { await result.current.resumeSession() })
+    expect(result.current.state).toBe('ACTIVE')
+    await act(async () => { window.dispatchEvent(new Event('online')) })
+    await waitFor(() => {
+      const delivered = fetchMock.mock.calls.slice(from)
+        .filter(c => String(c[0]).indexOf(EVENTS_URL) === 0)
+        .reduce<string[]>((a, c) => a.concat((bodyOf(c).events as Array<{ type: string }>).map(e => e.type)), [])
+      expect(delivered).toContain('PROCTORING_STARTED')
+      expect(delivered).toContain('SCREEN_SHARE_STARTED')
+    })
+  })
+})
+
+describe('clampHeartbeatInterval', () => {
+  it('never lets the server create a tight loop or a starved session', () => {
+    expect(clampHeartbeatInterval(0)).toBe(5_000)
+    expect(clampHeartbeatInterval(-1)).toBe(5_000)
+    expect(clampHeartbeatInterval(undefined)).toBe(20_000)
+    expect(clampHeartbeatInterval(NaN)).toBe(20_000)
+    expect(clampHeartbeatInterval(20_000)).toBe(20_000)
+    expect(clampHeartbeatInterval(3_600_000)).toBe(60_000)
   })
 })
 
