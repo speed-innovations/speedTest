@@ -18,18 +18,33 @@ import CameraPreview from './CameraPreview'
 /**
  * The pre-check the candidate sees before a proctored assessment begins.
  *
- * Two rules shape it. First, the consent copy is verbatim from the PRD and
- * neutral in tone - a candidate is being told what happens, not warned. Second,
- * status is never colour-only: every row pairs an icon and a word, so it reads
- * without colour vision and in a screenshot.
+ * Two rules shape it. First, the consent copy is verbatim from the
+ * live-monitoring ticket and neutral in tone - a candidate is being told what
+ * happens, not warned. The rules state what not to do without describing how
+ * detection decides, and are separate from that verbatim copy so either can
+ * change without touching the other. Second, status is never colour-only:
+ * every row pairs an icon and a word, so it reads without colour vision and
+ * in a screenshot.
  */
 
-/** Verbatim from the PRD. Do not reword without the product owner. */
+/** Verbatim from the live-monitoring ticket. Do not reword without the product owner. */
 export const CONSENT_COPY =
-  'This assessment uses your camera, microphone, and periodic screen snapshots to ' +
-  'help verify assessment integrity. Camera-based gaze analysis runs locally in ' +
-  'your browser and those frames are never uploaded. Recorded media is stored ' +
-  'temporarily and is automatically deleted after about three days.'
+  'Proctoring is enabled for this assessment. Your camera, microphone permission status, ' +
+  'screen-sharing status, and exam activity may be monitored during the assessment. ' +
+  'Gaze analysis runs locally in your browser.'
+
+/** Rules, not thresholds: what to do, never how detection decides. */
+export const PROCTORING_RULES = [
+  'Do not use a mobile phone, smartwatch or any other device during the assessment.',
+  'Keep your face clearly visible to the camera. Only you should be in view.',
+  'Keep screen sharing on until you submit.',
+  'Stay on this tab until you submit.',
+]
+
+/** What is and is not kept. True, and deliberately not frightening. */
+export const DATA_NOTE =
+  'Monitoring events, such as camera or screen-sharing interruptions, are logged for review. ' +
+  'No video, audio or screenshots are stored.'
 
 const ROW_LABEL: Record<DeviceStatus['state'], string> = {
   IDLE: 'Not checked yet',
@@ -118,11 +133,15 @@ export default function ProctoringSetup({
 
   return (
     <div className="space-y-4">
-      <div className="bg-brand-purple/5 border border-brand-purple/20 rounded-lg p-4">
-        <p className="text-sm font-semibold text-brand-purple mb-2 flex items-center gap-2">
+      <div className="bg-brand-purple/5 border border-brand-purple/20 rounded-lg p-4 space-y-3">
+        <p className="text-sm font-semibold text-brand-purple flex items-center gap-2">
           <ShieldCheck size={16} /> This is a proctored assessment
         </p>
         <p className="text-sm text-gray-600 leading-relaxed">{CONSENT_COPY}</p>
+        <ul className="text-sm text-gray-700 space-y-1.5 list-disc pl-5">
+          {PROCTORING_RULES.map(rule => <li key={rule}>{rule}</li>)}
+        </ul>
+        <p className="text-xs text-gray-500 leading-relaxed">{DATA_NOTE}</p>
       </div>
 
       <CameraPreview videoRef={videoRef} live={cameraLive} size="large" />

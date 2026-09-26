@@ -6,8 +6,7 @@ import QuestionText from '@/components/QuestionText'
 import ProctoringSetup from '@/components/proctoring/ProctoringSetup'
 import ProctoringRecovery from '@/components/proctoring/ProctoringRecovery'
 import ProctoringStatusIndicator from '@/components/proctoring/ProctoringStatusIndicator'
-import ProctoringWarning from '@/components/proctoring/ProctoringWarning'
-import CameraPreview from '@/components/proctoring/CameraPreview'
+import ProctoringExamOverlay from '@/components/proctoring/ProctoringExamOverlay'
 import { useProctoring } from '@/lib/proctoring/client/use-proctoring'
 import { Clock, AlertTriangle, ChevronLeft, ChevronRight, CheckCircle, Flag } from 'lucide-react'
 
@@ -472,7 +471,7 @@ export default function TestPage() {
   // Active Test UI
   return (
     <div className="h-screen flex flex-col bg-gray-100" onContextMenu={e => e.preventDefault()}>
-      {proctoringEnabled && <ProctoringWarning warning={proctoring.warning} />}
+      {proctoringEnabled && <ProctoringExamOverlay proctoring={proctoring} />}
       {/* Top bar */}
       <div className="flex items-center justify-between px-5 py-3 bg-brand-purple text-white shadow-lg">
         <div>
@@ -593,38 +592,6 @@ export default function TestPage() {
           </button>
         </div>
       </div>
-
-      {/*
-        The self-view stays mounted for the whole exam so the candidate can see
-        what is being recorded. Gaze inference does not read from it - the hook
-        owns its own element - so mounting it here costs nothing but a preview.
-      */}
-      {proctoringEnabled && proctoring.capture.cameraLive && (
-        <div className="fixed bottom-4 right-4 z-30">
-          <CameraPreview videoRef={proctoring.videoRef} live size="small" />
-        </div>
-      )}
-
-      {/*
-        Screen sharing can only be re-acquired from a user gesture, so a
-        candidate who pressed "Stop sharing" needs a button. It is a banner, not
-        a modal: they keep answering while it is up.
-      */}
-      {proctoringEnabled && proctoring.state === 'SCREEN_SHARE_STOPPED' && (
-        <div className="fixed bottom-4 left-4 z-30 max-w-sm bg-white border border-amber-300 rounded-lg shadow-lg p-4">
-          <p className="text-sm font-semibold text-amber-800 mb-1">Screen sharing has stopped</p>
-          <p className="text-xs text-gray-600 mb-3 leading-relaxed">
-            Your answers are unaffected. Please resume screen sharing so the rest of this
-            assessment stays proctored.
-          </p>
-          <button
-            onClick={() => { void proctoring.resumeScreenShare() }}
-            className="btn-primary text-sm py-2 w-full justify-center"
-          >
-            Resume screen sharing
-          </button>
-        </div>
-      )}
 
       {/* Submit Confirm Modal */}
       {showSubmitConfirm && (

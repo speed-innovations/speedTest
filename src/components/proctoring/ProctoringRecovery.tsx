@@ -33,9 +33,8 @@ export default function ProctoringRecovery({
   timeLeftLabel?: string
   onResume: () => void
 }) {
-  // A session that was swept as abandoned cannot be reopened - the unique index
-  // on the attempt is per attempt, not per attempt-and-status. Say so plainly
-  // instead of offering a button that will fail again.
+  // COMPLETED and EXPIRED sessions cannot be reopened. An interrupted one
+  // resumes through the same button.
   const closed = startError?.code === 'PROCTORING_SESSION_CLOSED'
   const denied = state === 'PERMISSION_DENIED'
 
@@ -72,9 +71,8 @@ export default function ProctoringRecovery({
               Proctoring could not be resumed
             </p>
             <p className="text-sm text-red-700 leading-relaxed">
-              This attempt&apos;s proctoring session was closed after the connection was lost for
-              too long, and it cannot be reopened. Please contact your invigilator or the
-              assessment coordinator now — do not close this page.
+              This attempt&apos;s proctoring session has already been closed and cannot be reopened.
+              Please contact your invigilator or the assessment coordinator now — do not close this page.
             </p>
           </div>
         ) : (
