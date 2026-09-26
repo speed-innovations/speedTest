@@ -280,7 +280,9 @@ describe('startSession', () => {
     const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
     expect(row.status).toBe('ACTIVE')
     expect(row.endedAt).toBeNull()
-    expect((await eventsOf(s.id, 'PROCTORING_RESUMED')).length).toBe(1)
+    const resumeEvents = await eventsOf(s.id, 'PROCTORING_RESUMED')
+    expect(resumeEvents.length).toBe(1)
+    expect(typeof (resumeEvents[0].metadata as { interruptedAt: number }).interruptedAt).toBe('number')
   })
 
   it('does not resume once the attempt deadline has passed', async () => {
@@ -329,6 +331,12 @@ describe('recordHeartbeat', () => {
     expect((await recordHeartbeat(s.id, { ...HEALTHY, microphone: 'MUTED' })).degraded).toBe(true)
     expect((await recordHeartbeat(s.id, { ...HEALTHY, screen: 'ENDED' })).degraded).toBe(true)
     expect((await recordHeartbeat(s.id, { ...HEALTHY, gazeMonitor: 'UNAVAILABLE' })).degraded).toBe(true)
+  })
+
+  it('gazeMonitor STOPPED on a live session is DEGRADED', async () => {
+    const { s } = await freshA()
+    const r = await recordHeartbeat(s.id, { ...HEALTHY, gazeMonitor: 'STOPPED' })
+    expect(r.status).toBe('DEGRADED')
   })
 
   it('heartbeat failure: a long gap is recorded once, server-side', async () => {
@@ -414,5 +422,13 @@ describe('sweepStaleSessions', () => {
     expect(gaps.length).toBe(1)
     expect(gaps[0].metadata).toEqual({ source: 'sweep' })
     expect((await startSession(a)).resumed).toBe(true)
+  })
+
+  it('never interrupts a session with a fresh heartbeat, and records no gap', async () => {
+    const { s } = await freshA()
+    await prisma.proctoringSession.update({ where: { id: s.id }, data: { lastHeartbeatAt: new Date() } })
+    await sweepStaleSessions()
+    expect((await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })).status).toBe('ACTIVE')
+    expect((await eventsOf(s.id, 'HEARTBEAT_MISSED')).length).toBe(0)
   })
 })

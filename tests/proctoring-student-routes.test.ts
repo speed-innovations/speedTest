@@ -185,4 +185,14 @@ describe('POST /api/student/proctoring/session', () => {
     expect(body.resumed).toBe(false)
     expect(JSON.stringify(body)).not.toMatch(/gaze|warningMs|cooldown|yaw|pitch|threshold/i)
   })
+
+  it('rate-limits repeated start requests', async () => {
+    as('a')
+    let last = 0
+    for (let i = 0; i < 11; i++) {
+      const res = await sessionPost(post('/api/student/proctoring/session', ref('a')))
+      last = res.status
+    }
+    expect(last).toBe(429)
+  })
 })

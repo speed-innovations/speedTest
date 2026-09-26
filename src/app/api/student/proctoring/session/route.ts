@@ -4,11 +4,15 @@ import { parseBody } from '@/lib/proctoring/http'
 import { sessionStartSchema } from '@/lib/proctoring/schemas'
 import { resolveOwnedAttempt, startSession, activeSessionFor } from '@/lib/proctoring/session'
 import { getProctoringConfig } from '@/lib/proctoring/config'
+import { rateLimit } from '@/lib/proctoring/rate-limit'
 import type { AttemptKind } from '@/lib/proctoring/types'
 
 export async function POST(req: NextRequest) {
   try {
     const student = await requireStudent()
+    if (!rateLimit(`session:${student.studentId}`, 10, 60_000)) {
+      throw new HttpError(429, 'Too many proctoring start requests. Please wait a moment.')
+    }
     const body = await parseBody(req, sessionStartSchema)
     const attempt = await resolveOwnedAttempt(body.attemptId, body.kind, body.parentId, student.studentId)
     const { session, resumed } = await startSession(attempt)

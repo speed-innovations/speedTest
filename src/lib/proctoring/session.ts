@@ -166,6 +166,10 @@ export async function startSession(a: ResolvedAttempt): Promise<StartResult> {
 
 async function resumeInterrupted(sessionId: string): Promise<SessionView> {
   const now = new Date()
+  const before = await prisma.proctoringSession.findUnique({
+    where: { id: sessionId },
+    select: { endedAt: true },
+  })
   const updated = await prisma.proctoringSession.updateMany({
     where: { id: sessionId, status: 'INTERRUPTED' },
     data: { status: 'ACTIVE', endedAt: null, lastHeartbeatAt: now },
@@ -175,6 +179,7 @@ async function resumeInterrupted(sessionId: string): Promise<SessionView> {
       clientEventId: `srv-resumed-${sessionId}-${now.getTime()}`,
       type: 'PROCTORING_RESUMED',
       startedAt: now,
+      metadata: before?.endedAt ? { interruptedAt: before.endedAt.getTime() } : undefined,
     })
   }
   // This call or a racing one reopened it; either way, read what is live now.
@@ -264,7 +269,8 @@ export async function recordHeartbeat(
     report.camera !== 'ACTIVE' ||
     report.microphone !== 'ACTIVE' ||
     (cfg.screenRequired && report.screen !== 'ACTIVE') ||
-    report.gazeMonitor === 'UNAVAILABLE'
+    report.gazeMonitor === 'UNAVAILABLE' ||
+    report.gazeMonitor === 'STOPPED'
   const status = degraded ? 'DEGRADED' : 'ACTIVE'
   const clientMs = Date.parse(report.clientTimestamp)
 
@@ -333,7 +339,17 @@ export async function sweepStaleSessions(now = new Date()): Promise<number> {
   let interrupted = 0
   for (const s of stale) {
     const updated = await prisma.proctoringSession.updateMany({
-      where: { id: s.id, status: { in: LIVE_STATUSES } },
+      // Re-checked, not just status: a heartbeat landing between this findMany
+      // and this updateMany must not be overridden by a sweep that saw stale
+      // data a moment ago.
+      where: {
+        id: s.id,
+        status: { in: LIVE_STATUSES },
+        OR: [
+          { lastHeartbeatAt: { lt: cutoff } },
+          { lastHeartbeatAt: null, createdAt: { lt: cutoff } },
+        ],
+      },
       data: { status: 'INTERRUPTED', endedAt: now },
     })
     if (updated.count !== 1) continue
