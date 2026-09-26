@@ -1,6 +1,7 @@
 'use client'
 import type { UseProctoringResult } from '@/lib/proctoring/client/use-proctoring'
 import CameraPreview from './CameraPreview'
+import ProctoringDiagnostics from './ProctoringDiagnostics'
 import ProctoringIntegrityBanner from './ProctoringIntegrityBanner'
 import ProctoringStatusIndicator from './ProctoringStatusIndicator'
 import ProctoringWarning from './ProctoringWarning'
@@ -21,6 +22,7 @@ export default function ProctoringExamOverlay({ proctoring }: { proctoring: UseP
         <CameraPreview videoRef={proctoring.videoRef} live={proctoring.capture.cameraLive} size="small" />
         <ProctoringStatusIndicator variant="panel" state={proctoring.state} health={proctoring.health} />
       </div>
+      <ProctoringDiagnostics snapshot={proctoring.diagnostics} state={proctoring.state} health={proctoring.health} />
     </>
   )
 }
