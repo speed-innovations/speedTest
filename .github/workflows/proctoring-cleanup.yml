@@ -46,8 +46,11 @@ jobs:
             exit 1
           fi
 
-          # A full batch means there is a backlog. Surface it rather than
-          # letting it quietly consume the storage budget.
-          if echo "$body" | grep -q '"batchExhausted":true'; then
-            echo "::warning::Batch was exhausted - a backlog remains. Consider a manual run."
+          # The stale-session sweep closes at most 200 sessions per run
+          # (sweepStaleSessions in src/lib/proctoring/session.ts). A full batch
+          # means more stale sessions are waiting; surface it rather than
+          # letting abandoned sessions sit open until the next hourly run.
+          interrupted=$(echo "$body" | sed -n 's/.*"staleSessionsInterrupted":\([0-9][0-9]*\).*/\1/p')
+          if [ -n "$interrupted" ] && [ "$interrupted" -ge 200 ]; then
+            echo "::warning::Sweep batch was full ($interrupted sessions) - a backlog may remain. Consider a manual run."
           fi

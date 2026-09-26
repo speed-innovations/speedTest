@@ -162,6 +162,7 @@ Limitations (state them to anyone relying on this):
 - Gaze is an estimate from head pose and iris offset against a baseline taken in the first few seconds.
 - Lighting, glasses, camera placement and a skewed baseline all degrade it.
 - A blur or a hidden tab means only that focus left the page.
+- A tab hidden for more than about five minutes falls under Chrome's intensive timer throttling, which can stretch the 20 s heartbeat to about a minute, past the 50 s missed-heartbeat threshold. A live client can therefore accrue `HEARTBEAT_MISSED` alongside `TAB_HIDDEN` for the same stretch. Read the two together: a gap that coincides with a long hidden tab may be browser throttling rather than a stopped client. The review signal caps how much missed heartbeats contribute.
 - The client is not trusted. A modified browser can fake heartbeats that report healthy devices, and it can read the detection thresholds from the JS bundle. What the server does guarantee: `/start` needs a live session; events and heartbeats bind to the caller's own session; heartbeat gaps are recorded server-side, including the trailing gap at submit; event volume is capped per session.
 
 ### Gaze: pure core, thin shell

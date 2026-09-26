@@ -91,9 +91,9 @@ export default function EventTimeline({ events }: { events: TimelineEvent[] }) {
     )
   }
 
-  // Ordered by elapsedMs so the timeline lines up with the segments and
-  // screenshots, which are indexed on the same axis. Events with no elapsedMs
-  // fall back to the clock so they still land in a sensible place.
+  // Ordered by elapsedMs - time since monitoring started - so the timeline
+  // reads in exam order. Events with no elapsedMs fall back to the clock so
+  // they still land in a sensible place.
   const ordered = events.slice().sort((a, b) => {
     const ae = a.elapsedMs
     const be = b.elapsedMs

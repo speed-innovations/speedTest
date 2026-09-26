@@ -28,14 +28,21 @@ Branch: `feat/proctoring`
 | 10 | Admin review UI | ✅ DONE | 70f5d01 | 2026-09-21 |
 | 11 | Retention and cleanup | ✅ DONE | 3448ebf | 2026-09-24 |
 | 12 | zod retrofit | ✅ DONE | 89da43f | 2026-09-24 |
-| 13 | Playwright E2E | ⬜ NOT STARTED | — | — |
-| 14 | Docs and local verification | ⬜ NOT STARTED | — | — |
-| 15 | **Release — GATED** | 🔒 BLOCKED | — | — |
+| 13 | Playwright E2E | ⏭ SUPERSEDED by the live-monitoring plan | — | — |
+| 14 | Docs and local verification | ⏭ SUPERSEDED by the live-monitoring plan | — | — |
+| 15 | **Release — GATED** | ⏭ SUPERSEDED by the live-monitoring plan | — | — |
 
-Statuses: `⬜ NOT STARTED` · `🟡 IN PROGRESS` · `✅ DONE` · `🔒 BLOCKED`
+Parts 13–15 belonged to the original recording design, which was removed.
+The metadata-only live-monitoring plan (`plans/proctoring/live-monitoring-spec.md`,
+tasks tracked under `.superpowers/sdd/live-monitoring-plan/`) replaced them,
+including its own docs, verification and release gate. `/nextpartofplan` has
+nothing left to pick from this table.
 
-Part 15 stays `🔒 BLOCKED` until the owner says otherwise, even when 1–14 are
-all done. `/nextpartofplan` must stop after Part 14 and report, not proceed.
+Statuses: `⬜ NOT STARTED` · `🟡 IN PROGRESS` · `✅ DONE` · `🔒 BLOCKED` · `⏭ SUPERSEDED`
+
+(Historical, for the original plan:) Part 15 was to stay `🔒 BLOCKED` until the owner said
+otherwise, and `/nextpartofplan` was to stop after Part 14. The release gate now
+lives in the live-monitoring plan.
 
 ---
 

@@ -146,6 +146,12 @@ describe('POST /api/cron/proctoring-cleanup', () => {
     expect(await res.json()).toEqual({ error: 'Unauthorized' })
   })
 
+  it('refuses a wrong secret of the same length with 401', async () => {
+    const sameLength = REAL_SECRET.slice(0, -1) + (REAL_SECRET.endsWith('9') ? '8' : '9')
+    expect(sameLength.length).toBe(REAL_SECRET.length)
+    expect((await call(`Bearer ${sameLength}`)).status).toBe(401)
+  })
+
   it('refuses a missing header with 401', async () => {
     expect((await call()).status).toBe(401)
   })

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { runRetentionCleanup } from '@/lib/proctoring/retention'
 
@@ -8,6 +9,18 @@ import { runRetentionCleanup } from '@/lib/proctoring/retention'
  * here. The blast radius of a leaked secret is an early close of already-stale
  * sessions - no data is deleted through this endpoint.
  */
+/**
+ * Constant-time comparison. timingSafeEqual needs equal-length buffers, so a
+ * length mismatch is rejected first; that reveals only the length, never the
+ * secret's content.
+ */
+function secretMatches(provided: string, secret: string): boolean {
+  const a = Buffer.from(provided, 'utf8')
+  const b = Buffer.from(secret, 'utf8')
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
 export async function POST(req: NextRequest) {
   const secret = process.env.CRON_SECRET
   if (!secret) {
@@ -16,8 +29,7 @@ export async function POST(req: NextRequest) {
   }
 
   const provided = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? ''
-  // Length check first so the comparison below is over equal-length strings.
-  if (provided.length !== secret.length || provided !== secret) {
+  if (!secretMatches(provided, secret)) {
     // No detail: an unauthenticated caller learns nothing about why.
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
