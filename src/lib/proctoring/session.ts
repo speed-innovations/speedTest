@@ -118,7 +118,9 @@ export interface StartResult {
  * closed by the sweep after its heartbeat went stale - is reopened while the
  * attempt is still running, because a dropped network is not a finished
  * attempt. The gap it left stays on record as HEARTBEAT_MISSED. COMPLETED and
- * EXPIRED sessions, and attempts past their deadline, stay closed.
+ * EXPIRED sessions, and attempts past their deadline, stay closed. COMPLETED
+ * is only ever written once the attempt is over (see finalizeForStudent), so
+ * refusing to reopen it cannot lock a candidate out of an unfinished exam.
  */
 export async function startSession(a: ResolvedAttempt): Promise<StartResult> {
   const cfg = getProctoringConfig()
@@ -319,6 +321,30 @@ export async function finalizeSession(
     where: { id: sessionId, status: { in: LIVE_STATUSES } },
     data: { status, endedAt: now },
   })
+}
+
+export interface StudentFinalizeResult {
+  /** No live session was left to close. */
+  alreadyFinalized: boolean
+  /** This call closed the session. */
+  completed: boolean
+}
+
+/**
+ * The candidate's own finalize request. It may only close monitoring once the
+ * attempt is over - submitted, or past its deadline. Before that it is a no-op
+ * and the session stays live: a submit that then fails must leave the
+ * candidate monitored and able to retry (and to reload, which resumes the live
+ * session), and a client cannot switch monitoring off early by calling this
+ * route. The submit routes close the session after scoring, so an honest
+ * submit is always followed by a COMPLETED session.
+ */
+export async function finalizeForStudent(a: ResolvedAttempt): Promise<StudentFinalizeResult> {
+  const session = await activeSessionFor(a)
+  if (!session) return { alreadyFinalized: true, completed: false }
+  if (!a.isSubmitted && !isPastDeadline(a.expiresAt)) return { alreadyFinalized: false, completed: false }
+  await finalizeSession(session.id, 'COMPLETED')
+  return { alreadyFinalized: false, completed: true }
 }
 
 /** Close sessions whose browser vanished, recording the gap. Bounded. */

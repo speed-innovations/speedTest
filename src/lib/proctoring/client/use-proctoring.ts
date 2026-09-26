@@ -79,6 +79,13 @@ export interface UseProctoringResult {
   resumeScreenShare: () => Promise<boolean>
   resumeCamera: () => Promise<boolean>
   resumeSession: () => Promise<boolean>
+  /**
+   * Deliver what is pending - the gaze episode in progress and the event
+   * queue - without stopping anything. Called before submit, so nothing is
+   * lost if the session closes on success, and harmless if the submit fails.
+   */
+  flushPending: () => Promise<void>
+  /** Tear monitoring down. Call only after the submit has succeeded. */
   finalize: () => Promise<void>
   videoRef: React.RefObject<HTMLVideoElement>
 }
@@ -210,6 +217,8 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
   const eventTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const heartbeatFailuresRef = useRef(0)
+  /** A heartbeat still awaiting its response; the next tick is skipped rather than overlapped. */
+  const heartbeatInFlightRef = useRef(false)
   const lastDiagnosticsAtRef = useRef(0)
   const startedAtRef = useRef(0)
   const startingRef = useRef(false)
@@ -336,6 +345,21 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
     }
   }, [handleDetectionEvent])
 
+  /**
+   * Close the gaze episode in progress and enqueue it, leaving the monitor
+   * running (a new episode starts on the next frame). Before submit and on
+   * pagehide, so an open FACE_MISSING or look-away is not lost with the page.
+   */
+  const flushGazeEpisode = useCallback(() => {
+    const monitor = gazeRef.current
+    if (!monitor) return
+    try {
+      monitor.flush().forEach(handleDetectionEvent)
+    } catch {
+      // Nothing in progress to keep.
+    }
+  }, [handleDetectionEvent])
+
   const startGaze = useCallback(async (stream: MediaStream) => {
     stopGaze(false)
     const generation = ++gazeGenerationRef.current
@@ -444,6 +468,7 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
     sessionIdRef.current = null
     gateRef.current.reset()
     heartbeatFailuresRef.current = 0
+    heartbeatInFlightRef.current = false
     healthRef.current = INITIAL_HEALTH
     setHealth(INITIAL_HEALTH)
     setWarning(null)
@@ -525,17 +550,26 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
     const ref = attemptRefRef.current
     const sessionId = sessionIdRef.current
     if (!ref || !sessionId || finalizedRef.current) return
+    // A slow or hung request must not be overlapped by the next tick: skip it.
+    // The request itself times out (proctoring-api), so this cannot stick.
+    if (heartbeatInFlightRef.current) return
+    heartbeatInFlightRef.current = true
     const h = healthRef.current
-    const res = await proctoringApi.heartbeat(ref, {
-      sessionId,
-      clientState: stateRef.current,
-      camera: h.camera,
-      microphone: h.microphone,
-      screen: h.screen,
-      gazeMonitor: gazeForServer(h.gaze),
-      clientTimestamp: new Date().toISOString(),
-      droppedEvents: queueRef.current ? queueRef.current.dropped : 0,
-    })
+    let res: Awaited<ReturnType<typeof proctoringApi.heartbeat>>
+    try {
+      res = await proctoringApi.heartbeat(ref, {
+        sessionId,
+        clientState: stateRef.current,
+        camera: h.camera,
+        microphone: h.microphone,
+        screen: h.screen,
+        gazeMonitor: gazeForServer(h.gaze),
+        clientTimestamp: new Date().toISOString(),
+        droppedEvents: queueRef.current ? queueRef.current.dropped : 0,
+      })
+    } finally {
+      heartbeatInFlightRef.current = false
+    }
     if (finalizedRef.current || unmountedRef.current) return
     if (!res.ok) {
       if (res.status === 404 || res.status === 409) {
@@ -699,7 +733,11 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
       const integrity = new IntegrityMonitor({
         onEvent: handleIntegrityEvent,
         onHealthChange: handleHealthChange,
-        onPageHide: () => { void queueRef.current?.flush({ keepalive: true }) },
+        onPageHide: () => {
+          // The open episode first, so the keepalive flush carries it.
+          flushGazeEpisode()
+          void queueRef.current?.flush({ keepalive: true })
+        },
       })
       integrityRef.current = integrity
       // Watch before anything else runs, so a device yanked during startup is
@@ -730,7 +768,7 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
       startingRef.current = false
     }
   }, [
-    acquireScreen, dispatch, enabled, enqueue, handleHealthChange, handleIntegrityEvent, isCancelled,
+    acquireScreen, dispatch, enabled, enqueue, flushGazeEpisode, handleHealthChange, handleIntegrityEvent, isCancelled,
     patchHealth, sendBatch, sendHeartbeat, startGaze, startTimers, support.supported, teardown,
     watchCameraTracks,
   ])
@@ -827,6 +865,13 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
     }
   }, [dispatch, isCancelled, sendHeartbeat])
 
+  const flushPending = useCallback(async (): Promise<void> => {
+    if (!enabled || finalizedRef.current) return
+    flushGazeEpisode()
+    const queue = queueRef.current
+    if (queue) await withTimeout(queue.flush(), FINALIZE_FLUSH_TIMEOUT_MS)
+  }, [enabled, flushGazeEpisode])
+
   const finalize = useCallback(async (): Promise<void> => {
     if (!enabled || finalizedRef.current) return
     finalizedRef.current = true
@@ -839,7 +884,9 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
     if (queue) await withTimeout(queue.flush(), FINALIZE_FLUSH_TIMEOUT_MS)
     const ref = attemptRefRef.current
     if (ref && sessionIdRef.current) {
-      // Best effort. The submit route's safety net closes it otherwise.
+      // Best effort, and normally a no-op: the submit route has already
+      // closed the session. The server refuses to close it before the attempt
+      // is over, so this can never end monitoring early.
       await proctoringApi.finalize(ref)
     }
     teardown()
@@ -874,6 +921,7 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
     resumeScreenShare,
     resumeCamera,
     resumeSession,
+    flushPending,
     finalize,
     videoRef,
   }

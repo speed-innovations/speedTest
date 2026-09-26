@@ -27,6 +27,7 @@ function fake(p: Partial<UseProctoringResult> = {}): UseProctoringResult {
     resumeScreenShare: vi.fn(() => Promise.resolve(true)),
     resumeCamera: vi.fn(() => Promise.resolve(true)),
     resumeSession: vi.fn(() => Promise.resolve(true)),
+    flushPending: vi.fn(() => Promise.resolve()),
     finalize: vi.fn(() => Promise.resolve()),
     videoRef: { current: null },
     ...p,

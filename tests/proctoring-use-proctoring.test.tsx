@@ -453,3 +453,73 @@ describe('useProctoring: cleanup', () => {
     expect(fetchMock.mock.calls.length).toBe(before)
   })
 })
+
+describe('useProctoring: submit ordering and page exit', () => {
+  const openEpisode = () => {
+    const t = performance.now()
+    return [{ type: 'FACE_MISSING', startedAtMs: t - 4000, endedAtMs: t, durationMs: 4000, confidence: 0.9 }]
+  }
+  const allEvents = () => callsTo(EVENTS_URL).reduce<Array<Record<string, unknown>>>(
+    (a, c) => a.concat(bodyOf(c).events as Array<Record<string, unknown>>), []
+  )
+
+  it('flushPending delivers the open episode and the queue, and leaves monitoring running', async () => {
+    const { result } = await started()
+    await waitFor(() => expect(gaze.onOutput).not.toBeNull())
+    gaze.flush.mockImplementation(openEpisode)
+    await act(async () => { await result.current.flushPending() })
+    expect(gaze.flush).toHaveBeenCalledTimes(1)
+    expect(sentTypes()).toContain('FACE_MISSING')
+    // Nothing torn down: a submit that fails next must leave the candidate monitored.
+    expect(callsTo(FINALIZE_URL).length).toBe(0)
+    expect(gaze.stop).not.toHaveBeenCalled()
+    cameraTracks.concat(screenTracks).forEach(t => expect(t.stop).not.toHaveBeenCalled())
+    expect(result.current.state).toBe('ACTIVE')
+    expect(result.current.capture.cameraLive).toBe(true)
+    await act(async () => { await result.current.finalize() })
+  })
+
+  it('pagehide flushes the open gaze episode into the keepalive flush', async () => {
+    const { result } = await started()
+    await waitFor(() => expect(gaze.onOutput).not.toBeNull())
+    // Let the start-up flushes settle so the keepalive one is not coalesced into them.
+    await act(async () => { await result.current.flushPending() })
+    gaze.flush.mockImplementation(openEpisode)
+    await act(async () => { window.dispatchEvent(new Event('pagehide')) })
+    await waitFor(() => expect(allEvents().some(e => e.type === 'FACE_MISSING')).toBe(true))
+    const call = callsTo(EVENTS_URL).find(c =>
+      (bodyOf(c).events as Array<{ type: string }>).some(e => e.type === 'FACE_MISSING'))!
+    expect((call[1] as RequestInit).keepalive).toBe(true)
+    // Keepalive requests are left without a timeout signal; they must outlive the page.
+    expect((call[1] as RequestInit).signal).toBeUndefined()
+    expect(gaze.stop).not.toHaveBeenCalled()
+    await act(async () => { await result.current.finalize() })
+  })
+})
+
+describe('useProctoring: request timeouts', () => {
+  it('non-keepalive requests carry an abort signal', async () => {
+    const { result } = await started()
+    await waitFor(() => expect(callsTo(HEARTBEAT_URL).length).toBeGreaterThan(0))
+    expect((callsTo(SESSION_URL)[0][1] as RequestInit).signal).toBeInstanceOf(AbortSignal)
+    expect((callsTo(HEARTBEAT_URL)[0][1] as RequestInit).signal).toBeInstanceOf(AbortSignal)
+    await act(async () => { await result.current.finalize() })
+  })
+
+  it('skips a heartbeat tick while the previous heartbeat is still in flight', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    let release: (r: Response) => void = () => {}
+    heartbeatReply = () => new Promise<Response>(r => { release = r })
+    const { result } = await started()
+    await waitFor(() => expect(callsTo(HEARTBEAT_URL).length).toBe(1))
+    await act(async () => { vi.advanceTimersByTime(20_000) })
+    await act(async () => { vi.advanceTimersByTime(20_000) })
+    expect(callsTo(HEARTBEAT_URL).length).toBe(1)
+    // Once it settles, the next tick sends again.
+    heartbeatReply = () => json({ ok: true, session: { sessionId: 's1', status: 'ACTIVE' } })
+    await act(async () => { release(new Response(JSON.stringify({ ok: true, session: { sessionId: 's1', status: 'ACTIVE' } }), { status: 200 })) })
+    await act(async () => { vi.advanceTimersByTime(20_000) })
+    await waitFor(() => expect(callsTo(HEARTBEAT_URL).length).toBe(2))
+    await act(async () => { await result.current.finalize() })
+  })
+})

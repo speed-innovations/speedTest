@@ -15,6 +15,7 @@ import { prisma } from '@/lib/db'
 import { POST as eventsPost } from '@/app/api/student/proctoring/events/route'
 import { POST as heartbeatPost } from '@/app/api/student/proctoring/heartbeat/route'
 import { POST as sessionPost } from '@/app/api/student/proctoring/session/route'
+import { POST as finalizePost } from '@/app/api/student/proctoring/finalize/route'
 import { resetRateLimitsForTests } from '@/lib/proctoring/rate-limit'
 import { resetProctoringConfigForTests } from '@/lib/proctoring/config'
 
@@ -194,5 +195,39 @@ describe('POST /api/student/proctoring/session', () => {
       last = res.status
     }
     expect(last).toBe(429)
+  })
+})
+
+describe('POST /api/student/proctoring/finalize', () => {
+  const statusOf = async (who: 'a' | 'b') =>
+    (await prisma.proctoringSession.findUniqueOrThrow({ where: { id: people[who].sessionId } })).status
+
+  it('before submit: succeeds but leaves the session live, so monitoring cannot be switched off early', async () => {
+    as('a')
+    const res = await finalizePost(post('/api/student/proctoring/finalize', ref('a')))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, alreadyFinalized: false, completed: false })
+    // Still live (earlier heartbeat tests may have left it DEGRADED).
+    expect(['ACTIVE', 'DEGRADED']).toContain(await statusOf('a'))
+    // Heartbeats keep landing on it.
+    const hb = await heartbeatPost(post('/api/student/proctoring/heartbeat', { ...ref('a'), sessionId: people.a.sessionId, ...HEALTH }))
+    expect((await hb.json()).session).not.toBeNull()
+  })
+
+  it('after submit: completes the session', async () => {
+    as('b')
+    await prisma.testAttempt.update({ where: { id: people.b.attemptId }, data: { isSubmitted: true, submittedAt: new Date() } })
+    const res = await finalizePost(post('/api/student/proctoring/finalize', ref('b')))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, alreadyFinalized: false, completed: true })
+    expect(await statusOf('b')).toBe('COMPLETED')
+  })
+
+  it("refuses another candidate's attempt with 404", async () => {
+    as('b')
+    const res = await finalizePost(post('/api/student/proctoring/finalize', ref('a')))
+    expect(res.status).toBe(404)
+    // Still live (earlier heartbeat tests may have left it DEGRADED).
+    expect(['ACTIVE', 'DEGRADED']).toContain(await statusOf('a'))
   })
 })

@@ -7,6 +7,7 @@ import {
   activeSessionFor,
   recordHeartbeat,
   finalizeSession,
+  finalizeForStudent,
   recordGapIfMissed,
   sweepStaleSessions,
 } from '@/lib/proctoring/session'
@@ -297,6 +298,10 @@ describe('startSession', () => {
     }
   })
 
+  // Valid only for a genuinely COMPLETED session: COMPLETED is written by the
+  // submit route or by finalizeForStudent once the attempt is over, never
+  // before (see 'finalizeForStudent' below), so this cannot lock out a
+  // candidate whose submit failed.
   it('never reopens a COMPLETED session', async () => {
     const { a, s } = await freshA()
     await finalizeSession(s.id)
@@ -409,6 +414,54 @@ describe('finalizeSession', () => {
     const gaps = await eventsOf(s.id, 'HEARTBEAT_MISSED')
     expect(gaps.length).toBe(1)
     expect(gaps[0].metadata).toEqual({ source: 'finalize' })
+  })
+})
+
+describe("finalizeForStudent (the candidate's own finalize)", () => {
+  it('before submit and before the deadline: a no-op, the session stays live', async () => {
+    const { a, s } = await freshA()
+    expect(await finalizeForStudent(a)).toEqual({ alreadyFinalized: false, completed: false })
+    const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
+    expect(row.status).toBe('ACTIVE')
+    expect(row.endedAt).toBeNull()
+    expect((await activeSessionFor(a))?.id).toBe(s.id)
+  })
+
+  it('a failed submit followed by a reload resumes monitoring rather than locking the candidate out', async () => {
+    const { a, s } = await freshA()
+    await finalizeForStudent(a) // the client's call; the submit then fails
+    const again = await startSession(a)
+    expect(again.session.id).toBe(s.id)
+    expect(again.resumed).toBe(false)
+  })
+
+  it('after submit: completes the session', async () => {
+    const { s } = await freshA()
+    await prisma.testAttempt.update({ where: { id: attemptAId }, data: { isSubmitted: true, submittedAt: new Date() } })
+    try {
+      const submitted = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
+      expect(await finalizeForStudent(submitted)).toEqual({ alreadyFinalized: false, completed: true })
+      const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
+      expect(row.status).toBe('COMPLETED')
+      expect(row.endedAt).not.toBeNull()
+      // Idempotent: the submit route's safety net or a retry finds nothing live.
+      expect(await finalizeForStudent(submitted)).toEqual({ alreadyFinalized: true, completed: false })
+    } finally {
+      await prisma.testAttempt.update({ where: { id: attemptAId }, data: { isSubmitted: false, submittedAt: null } })
+    }
+  })
+
+  it('past the deadline: completes the session', async () => {
+    const { s } = await freshA()
+    await prisma.testAttempt.update({ where: { id: attemptAId }, data: { expiresAt: new Date(Date.now() - 10 * 60_000) } })
+    try {
+      const expired = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
+      expect(await finalizeForStudent(expired)).toEqual({ alreadyFinalized: false, completed: true })
+      const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
+      expect(row.status).toBe('COMPLETED')
+    } finally {
+      await prisma.testAttempt.update({ where: { id: attemptAId }, data: { expiresAt: null } })
+    }
   })
 })
 

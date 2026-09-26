@@ -289,12 +289,18 @@ export default function TestPage() {
     // the server grades on its own deadline, so the wait costs no marks.
     await new Promise(r => setTimeout(r, Math.floor(Math.random() * 4000)))
     setSubmitting(true)
-    // Evidence must not cost a candidate their answers. If finalization fails
-    // the submit proceeds; the stale sweep will close the session.
-    try { await proctoring.finalize() } catch { /* logged inside finalize */ }
+    // Pending proctoring events go before the answers; monitoring keeps
+    // running. A proctoring failure can never block a submit.
+    try { await proctoring.flushPending() } catch { /* best effort */ }
     try {
       const ok = await submitWithRetry()
-      if (ok) { setSubmitted(true); toast.success('Time up! Test submitted automatically.') }
+      if (ok) {
+        setSubmitted(true)
+        toast.success('Time up! Test submitted automatically.')
+        // Only now: a failed submit must leave the candidate monitored and
+        // able to retry. The submit route has already closed the session.
+        try { await proctoring.finalize() } catch { /* best effort */ }
+      }
     } catch {
       toast.error('Auto-submit failed. Click "Submit Test" to retry.')
     }
@@ -305,15 +311,18 @@ export default function TestPage() {
     if (!attemptId) return
     setSubmitting(true)
     setShowSubmitConfirm(false)
-    // The final segment is handed to the upload queue before the answers go,
-    // and a proctoring failure can never block a submit.
-    try { await proctoring.finalize() } catch { /* logged inside finalize */ }
+    // Pending proctoring events are delivered before the answers go, without
+    // stopping monitoring, and a proctoring failure can never block a submit.
+    try { await proctoring.flushPending() } catch { /* best effort */ }
     try {
       const ok = await submitWithRetry()
       if (ok) {
         setSubmitted(true)
         clearInterval(timerRef.current)
         toast.success('Test submitted successfully!')
+        // Torn down only after the submit succeeded: if it fails, monitoring
+        // stays up, the session stays live and a retry (or reload) works.
+        try { await proctoring.finalize() } catch { /* best effort */ }
       }
     } catch (err: any) {
       toast.error('Submit failed. Your answers are saved. Please try again.', { duration: 5000 })

@@ -47,10 +47,25 @@ export interface HeartbeatReport {
   droppedEvents?: number
 }
 
+/**
+ * A hung request must not pin the event queue's in-flight slot or stack up
+ * heartbeats for minutes. Keepalive requests (pagehide) are left alone: they
+ * are meant to outlive the page, and the browser bounds them itself.
+ */
+export const REQUEST_TIMEOUT_MS = 10_000
+
+function timeoutSignal(ms: number): AbortSignal | undefined {
+  return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(ms)
+    : undefined
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<ApiResult<T>> {
   try {
+    const signal = init?.signal ?? (init?.keepalive ? undefined : timeoutSignal(REQUEST_TIMEOUT_MS))
     const res = await fetch(url, {
       ...init,
+      ...(signal ? { signal } : {}),
       headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
     })
     const body = await res.json().catch(() => null)
@@ -92,7 +107,8 @@ export const proctoringApi = {
     return post('/api/student/proctoring/heartbeat', { ...ref, ...report })
   },
 
-  finalize(ref: AttemptRef): Promise<ApiResult<{ ok: boolean; alreadyFinalized: boolean }>> {
+  /** Closes the session only once the attempt is submitted or past its deadline; otherwise `completed: false`. */
+  finalize(ref: AttemptRef): Promise<ApiResult<{ ok: boolean; alreadyFinalized: boolean; completed: boolean }>> {
     return post('/api/student/proctoring/finalize', ref)
   },
 
