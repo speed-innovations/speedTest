@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { requireAdmin, errorResponse } from '@/lib/attempt-auth'
 import { parseBody } from '@/lib/proctoring/http'
 import { testCreateSchema } from '@/lib/schemas/admin'
+import { assertCanEnableProctoring } from '@/lib/proctoring/session'
 
 export async function GET() {
   try {
@@ -22,6 +23,7 @@ export async function POST(req: NextRequest) {
   try {
     await requireAdmin()
     const body = await parseBody(req, testCreateSchema)
+    assertCanEnableProctoring(body.proctoringEnabled === true, false)
 
     // Fields are mapped explicitly rather than spreading the parsed body: the
     // status derivation below and the `|| null` coercions are behaviour this
@@ -38,7 +40,7 @@ export async function POST(req: NextRequest) {
         isWalkIn: body.isWalkIn || false,
         status: body.isWalkIn ? 'ACTIVE' : 'DRAFT',
         // Strict === true, not a truthy check: this flag decides whether a
-        // candidate is recorded, so the string "false" must never switch it on.
+        // candidate is monitored, so the string "false" must never switch it on.
         proctoringEnabled: body.proctoringEnabled === true,
       }
     })

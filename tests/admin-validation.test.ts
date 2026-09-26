@@ -32,6 +32,7 @@ import {
   jobOpeningUpdateSchema,
 } from '@/lib/schemas/admin'
 import { PUT as testPut } from '@/app/api/admin/tests/[id]/route'
+import { resetProctoringConfigForTests } from '@/lib/proctoring/config'
 import { POST as questionPost } from '@/app/api/admin/questions/route'
 import { POST as collegePost } from '@/app/api/admin/colleges/route'
 
@@ -92,6 +93,10 @@ afterAll(async () => {
 
 beforeEach(() => {
   getServerSession.mockReset()
+  // Enabling proctoring on a test is refused while the deployment switch is
+  // off; these cases exercise the update itself, so switch it on.
+  process.env.PROCTORING_ENABLED = 'true'
+  resetProctoringConfigForTests()
 })
 
 describe('testCreateSchema', () => {

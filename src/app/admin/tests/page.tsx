@@ -78,7 +78,10 @@ export default function TestsPage() {
         : 'Proctoring disabled')
       load()
     } else {
-      toast.error('Failed to update')
+      // A 409 explains why proctoring cannot be enabled (the deployment switch
+      // is off); show that rather than a generic failure.
+      const data = await res.json().catch(() => null)
+      toast.error((data && typeof data.error === 'string' && data.error) || 'Failed to update', { duration: 8000 })
     }
   }
 
@@ -201,7 +204,7 @@ export default function TestsPage() {
                         : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                     }`} title={test.proctoringEnabled
                       ? 'Disable proctoring for this test'
-                      : 'Enable proctoring: webcam, microphone and screen snapshots, deleted after ~3 days'}>
+                      : "Enable proctoring: monitors camera, microphone and screen-sharing status; gaze analysis runs in the candidate's browser. No video, audio or screenshots are recorded or stored."}>
                     <ShieldCheck size={13} /> {test.proctoringEnabled ? 'Proctored' : 'Proctor'}
                   </button>
                   <Link href={`/admin/tests/${test.id}`} className="btn-secondary text-xs py-1.5 px-3">

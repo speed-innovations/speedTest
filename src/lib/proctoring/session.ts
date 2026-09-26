@@ -105,6 +105,21 @@ export function assertProctoringAvailable(cfg = getProctoringConfig()): void {
   if (!cfg.operational) throw new HttpError(503, 'PROCTORING_NOT_OPERATIONAL')
 }
 
+export const PROCTORING_OFF_MESSAGE =
+  'Proctoring is switched off for this deployment (PROCTORING_ENABLED is not set), so candidates ' +
+  'could not start a proctored test. Enable it for the deployment before turning proctoring on for a test.'
+
+/**
+ * Refuse to switch a test's proctoring ON while the deployment switch is off:
+ * every candidate would reach setup and be refused at /start, and the admin
+ * would have seen a success toast. Turning it OFF is always allowed, and so is
+ * saving a test that is already proctored (no change), so an admin can still
+ * edit such a test's other fields.
+ */
+export function assertCanEnableProctoring(wanted: boolean | undefined, alreadyOn: boolean, cfg = getProctoringConfig()): void {
+  if (wanted === true && !alreadyOn && !cfg.enabled) throw new HttpError(409, PROCTORING_OFF_MESSAGE)
+}
+
 export interface StartResult {
   session: SessionView
   /** True when an INTERRUPTED session was reopened rather than created. */

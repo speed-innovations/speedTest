@@ -98,7 +98,10 @@ export default function EditTestPage() {
           jobOpeningId: form.jobOpeningId || null,
         })
       })
-      if (!res.ok) throw new Error(await res.text())
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error((data && typeof data.error === 'string' && data.error) || 'Failed to update test')
+      }
       toast.success('Test updated successfully!')
       router.push('/admin/tests')
       router.refresh()
@@ -180,7 +183,7 @@ export default function EditTestPage() {
               className="w-4 h-4 text-brand-purple rounded" />
             <label htmlFor="proctoringEnabled" className="text-sm">
               <span className="font-medium text-brand-purple">Proctored Assessment</span>
-              <span className="text-gray-600 block text-xs">Records webcam, microphone and periodic screen snapshots, with gaze analysis running locally in the candidate&apos;s browser. Candidates must grant camera, microphone and screen sharing before the timer starts. Evidence is deleted automatically after about three days.</span>
+              <span className="text-gray-600 block text-xs">Monitors camera, microphone and screen-sharing status; gaze analysis runs locally in the candidate&apos;s browser. Candidates must grant camera, microphone and screen sharing before the timer starts. No video, audio or screenshots are recorded or stored.</span>
             </label>
           </div>
         </div>

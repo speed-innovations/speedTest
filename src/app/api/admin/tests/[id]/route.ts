@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db'
 import { requireAdmin, errorResponse } from '@/lib/attempt-auth'
 import { parseBody } from '@/lib/proctoring/http'
 import { testUpdateSchema } from '@/lib/schemas/admin'
+import { assertCanEnableProctoring } from '@/lib/proctoring/session'
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const params = await ctx.params
@@ -24,6 +25,10 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   try {
     await requireAdmin()
     const body = await parseBody(req, testUpdateSchema)
+    if (body.proctoringEnabled === true) {
+      const current = await prisma.test.findUnique({ where: { id: params.id }, select: { proctoringEnabled: true } })
+      assertCanEnableProctoring(true, current?.proctoringEnabled === true)
+    }
 
     // Every field is left `undefined` when the caller omitted it, which Prisma
     // reads as "leave this column alone". The admin UI genuinely sends

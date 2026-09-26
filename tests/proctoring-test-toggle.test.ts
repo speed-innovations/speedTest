@@ -3,7 +3,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 /**
  * The admin toggle for Test.proctoringEnabled.
  *
- * This column decides whether a candidate is recorded, and until now nothing in
+ * This column decides whether a candidate is monitored, and until now nothing in
  * the product could set it - it could only be changed by writing to the
  * database by hand, which meant the feature could not be switched on in
  * production at all.
@@ -24,6 +24,7 @@ vi.mock('next-auth', () => ({
 import { prisma } from '@/lib/db'
 import { POST } from '@/app/api/admin/tests/route'
 import { PUT } from '@/app/api/admin/tests/[id]/route'
+import { resetProctoringConfigForTests } from '@/lib/proctoring/config'
 
 const TAG = `toggle-test-${Date.now()}`
 const createdTestIds: string[] = []
@@ -93,7 +94,12 @@ beforeAll(async () => {
   studentEmail = student.email
 })
 
+const ORIGINAL_PROCTORING_ENABLED = process.env.PROCTORING_ENABLED
+
 afterAll(async () => {
+  if (ORIGINAL_PROCTORING_ENABLED === undefined) delete process.env.PROCTORING_ENABLED
+  else process.env.PROCTORING_ENABLED = ORIGINAL_PROCTORING_ENABLED
+  resetProctoringConfigForTests()
   await prisma.test.deleteMany({ where: { id: { in: createdTestIds } } })
   await prisma.user.deleteMany({ where: { id: { in: userIds } } })
   await prisma.$disconnect()
@@ -101,6 +107,58 @@ afterAll(async () => {
 
 beforeEach(() => {
   getServerSession.mockReset()
+  process.env.PROCTORING_ENABLED = 'true'
+  resetProctoringConfigForTests()
+})
+
+describe('with PROCTORING_ENABLED off for the deployment', () => {
+  const switchOff = () => {
+    process.env.PROCTORING_ENABLED = 'false'
+    resetProctoringConfigForTests()
+  }
+
+  it('refuses to create a proctored test with 409 and says why', async () => {
+    switchOff()
+    asAdmin()
+    const title = `${TAG}-off-create`
+    const res = await post({ ...BASE, title, proctoringEnabled: true })
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toMatch(/PROCTORING_ENABLED/)
+    expect(await prisma.test.count({ where: { title } })).toBe(0)
+  })
+
+  it('still creates an unproctored test', async () => {
+    switchOff()
+    const test = await createTest({ title: `${TAG}-off-plain`, proctoringEnabled: false })
+    expect(await readFlag(test.id)).toBe(false)
+  })
+
+  it('refuses to switch proctoring on with 409 and leaves the column off', async () => {
+    const test = await createTest({ title: `${TAG}-off-toggle` })
+    switchOff()
+    asAdmin()
+    const res = await put(test.id, { proctoringEnabled: true })
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toMatch(/switched off for this deployment/)
+    expect(await readFlag(test.id)).toBe(false)
+  })
+
+  it('always allows switching proctoring off', async () => {
+    const test = await createTest({ title: `${TAG}-off-disable`, proctoringEnabled: true })
+    switchOff()
+    asAdmin()
+    expect((await put(test.id, { proctoringEnabled: false })).status).toBe(200)
+    expect(await readFlag(test.id)).toBe(false)
+  })
+
+  it('lets an already-proctored test be saved unchanged, so its other fields stay editable', async () => {
+    const test = await createTest({ title: `${TAG}-off-edit`, proctoringEnabled: true })
+    switchOff()
+    asAdmin()
+    const res = await put(test.id, { title: `${TAG}-off-edit-renamed`, proctoringEnabled: true })
+    expect(res.status).toBe(200)
+    expect(await readFlag(test.id)).toBe(true)
+  })
 })
 
 describe('POST /api/admin/tests', () => {

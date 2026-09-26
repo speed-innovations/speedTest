@@ -8,10 +8,10 @@ import type { RefObject } from 'react'
  * Purely a preview. Gaze inference reads from the hook's own video element, so
  * this can be mounted, unmounted and resized freely - including when the page
  * switches from the pre-check screen to the questions - without interrupting
- * detection or recording.
+ * detection. Nothing is recorded.
  *
  * Showing candidates what is being captured is not decoration: it is the only
- * way they can tell that the thing recording them is framed on their face and
+ * way they can tell that the camera being analysed is framed on their face and
  * nothing else in the room.
  */
 
