@@ -21,7 +21,10 @@ export async function POST(req: NextRequest) {
     const session = await activeSessionFor(attempt)
     // A finalized session is not an error - the client may still be flushing.
     // Accept the call, store nothing, and let it stop.
-    if (!session) return NextResponse.json({ accepted: 0, duplicates: 0, session: null })
+    if (!session) return NextResponse.json({ accepted: 0, duplicates: 0, capped: false, session: null })
+    // The session the client names must be its own live session. Events for
+    // anyone else's session are refused as not found, never stored.
+    if (session.id !== body.sessionId) throw new HttpError(404, 'Proctoring session not found')
 
     const result = await ingestEvents(session.id, body.events, attempt.questionIds)
     return NextResponse.json({ ...result, session: session.id })

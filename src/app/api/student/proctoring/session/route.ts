@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     const student = await requireStudent()
     const body = await parseBody(req, sessionStartSchema)
     const attempt = await resolveOwnedAttempt(body.attemptId, body.kind, body.parentId, student.studentId)
-    const session = await startSession(attempt)
+    const { session, resumed } = await startSession(attempt)
     const cfg = getProctoringConfig()
 
     return NextResponse.json({
@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
       status: session.status,
       version: session.version,
       retentionExpiresAt: session.retentionExpiresAt,
+      resumed,
       // Operational parameters only. Detection thresholds are deliberately
       // not sent: a candidate must not be able to read them off the network tab.
       config: {

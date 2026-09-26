@@ -13,15 +13,28 @@ export const sessionStartSchema = z.object({
   parentId: idSchema,
 })
 
+export const deviceHealthSchema = z.enum(['ACTIVE', 'MUTED', 'ENDED', 'UNAVAILABLE'])
+
+/**
+ * Liveness plus device health. No media, ever - this is what the browser
+ * says about its own devices. The server records it and decides what a gap or
+ * a dead device means; it never takes the client's word that all is well.
+ */
 export const heartbeatSchema = z.object({
   attemptId: idSchema,
   kind: attemptKindSchema,
   parentId: idSchema,
-  screenSharing: z.boolean(),
-  cameraLive: z.boolean(),
-  micLive: z.boolean(),
-  clientVersion: z.string().max(32).optional(),
+  sessionId: idSchema,
+  clientState: z.string().regex(/^[A-Z_]{1,32}$/),
+  camera: deviceHealthSchema,
+  microphone: deviceHealthSchema,
+  screen: deviceHealthSchema,
+  gazeMonitor: z.enum(['STARTING', 'CALIBRATING', 'RUNNING', 'UNAVAILABLE', 'STOPPED']),
+  clientTimestamp: z.string().datetime(),
+  droppedEvents: z.number().int().min(0).max(1_000_000).optional(),
 })
+
+export type HeartbeatInput = z.infer<typeof heartbeatSchema>
 
 export const finalizeSchema = z.object({
   attemptId: idSchema,
@@ -76,6 +89,7 @@ export const eventBatchSchema = z.object({
   attemptId: idSchema,
   kind: attemptKindSchema,
   parentId: idSchema,
+  sessionId: idSchema,
   events: z.array(eventSchema).min(1).max(50),
 })
 

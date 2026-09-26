@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/lib/db'
-import { ingestEvents } from '@/lib/proctoring/events'
+import { ingestEvents, MAX_EVENTS_PER_SESSION, recordServerEvent } from '@/lib/proctoring/events'
 import type { IncomingEvent } from '@/lib/proctoring/schemas'
 import { eventBatchSchema } from '@/lib/proctoring/schemas'
 
@@ -103,7 +103,7 @@ function gaze(id?: string): IncomingEvent {
 describe('ingestEvents', () => {
   it('stores a batch and reports the accepted count', async () => {
     const r = await ingestEvents(sessionId, [gaze(), gaze(), gaze()], ASSIGNED)
-    expect(r).toEqual({ accepted: 3, duplicates: 0 })
+    expect(r).toEqual({ accepted: 3, duplicates: 0, capped: false })
     expect(await prisma.proctoringEvent.count({ where: { proctoringSessionId: sessionId } })).toBe(3)
   })
 
@@ -127,7 +127,7 @@ describe('ingestEvents', () => {
     const shared = gaze('evt-overlap-aaa1')
     await ingestEvents(sessionId, [shared], ASSIGNED)
     const r = await ingestEvents(sessionId, [shared, gaze('evt-overlap-aaa2')], ASSIGNED)
-    expect(r).toEqual({ accepted: 1, duplicates: 1 })
+    expect(r).toEqual({ accepted: 1, duplicates: 1, capped: false })
     expect(await prisma.proctoringEvent.count({ where: { proctoringSessionId: sessionId } })).toBe(2)
   })
 
@@ -222,10 +222,29 @@ describe('ingestEvents', () => {
     })
     expect(rows.map(r => r.severity)).toEqual(['INFO', 'WARN'])
   })
+
+  it('stops storing at the per-session ceiling', async () => {
+    const filler = []
+    for (let i = 0; i < MAX_EVENTS_PER_SESSION - 2; i++) {
+      filler.push({ proctoringSessionId: sessionId, clientEventId: `fill-${i}`, type: 'WINDOW_BLUR' as const, startedAt: new Date() })
+    }
+    await prisma.proctoringEvent.createMany({ data: filler })
+    const r = await ingestEvents(sessionId, [gaze(), gaze(), gaze(), gaze()], ASSIGNED)
+    expect(r).toMatchObject({ accepted: 2, capped: true })
+    expect(await prisma.proctoringEvent.count({ where: { proctoringSessionId: sessionId } })).toBe(MAX_EVENTS_PER_SESSION)
+    expect((await ingestEvents(sessionId, [gaze()], ASSIGNED)).accepted).toBe(0)
+  })
+
+  it('records a server event once, however often it is observed', async () => {
+    const at = new Date()
+    const e = { clientEventId: `srv-test-${sessionId}`, type: 'HEARTBEAT_MISSED' as const, startedAt: at }
+    expect(await recordServerEvent(sessionId, e)).toBe(true)
+    expect(await recordServerEvent(sessionId, e)).toBe(false)
+  })
 })
 
 describe('eventBatchSchema', () => {
-  const base = { attemptId: 'a1', kind: 'scheduled', parentId: 'p1' }
+  const base = { attemptId: 'a1', kind: 'scheduled', parentId: 'p1', sessionId: 's1' }
   const ok = { clientEventId: 'evt-schema-00001', type: 'LOOKING_DOWN', startedAt: new Date().toISOString() }
 
   it('accepts a well-formed metadata event', () => {

@@ -7,6 +7,8 @@ import {
   activeSessionFor,
   recordHeartbeat,
   finalizeSession,
+  recordGapIfMissed,
+  sweepStaleSessions,
 } from '@/lib/proctoring/session'
 import { resetProctoringConfigForTests } from '@/lib/proctoring/config'
 
@@ -153,6 +155,7 @@ afterAll(async () => {
 beforeEach(() => {
   process.env.PROCTORING_ENABLED = 'true'
   process.env.PROCTORING_OPERATIONAL = 'true'
+  process.env.PROCTORING_HEARTBEAT_INTERVAL_MS = '20000'
   resetProctoringConfigForTests()
 })
 
@@ -198,30 +201,45 @@ describe('resolveOwnedAttempt', () => {
   })
 })
 
+const HEALTHY = {
+  camera: 'ACTIVE', microphone: 'ACTIVE', screen: 'ACTIVE', gazeMonitor: 'RUNNING',
+  clientState: 'ACTIVE', clientTimestamp: new Date().toISOString(),
+} as const
+
+/** A brand-new session on attempt A, with its events wiped by the cascade. */
+async function freshA() {
+  await prisma.proctoringSession.deleteMany({ where: { testAttemptId: attemptAId } })
+  const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
+  const { session } = await startSession(a)
+  return { a, s: session }
+}
+
+const eventsOf = (sessionId: string, type: 'HEARTBEAT_MISSED' | 'PROCTORING_RESUMED') =>
+  prisma.proctoringEvent.findMany({ where: { proctoringSessionId: sessionId, type } })
+
 describe('startSession', () => {
   it('creates an ACTIVE session', async () => {
-    const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
-    const s = await startSession(a)
-    expect(s.status).toBe('ACTIVE')
+    const { s } = await freshA()
     const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
+    expect(row.status).toBe('ACTIVE')
     expect(row.testAttemptId).toBe(attemptAId)
     expect(row.walkInAttemptId).toBeNull()
     expect(row.lastHeartbeatAt).not.toBeNull()
   })
 
-  it('is idempotent - a second call returns the same session', async () => {
-    const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
-    const first = await startSession(a)
-    const second = await startSession(a)
-    expect(second.id).toBe(first.id)
-    const count = await prisma.proctoringSession.count({ where: { testAttemptId: attemptAId } })
-    expect(count).toBe(1)
+  it('is idempotent - a second call returns the same session, not resumed', async () => {
+    const { a, s } = await freshA()
+    const again = await startSession(a)
+    expect(again.session.id).toBe(s.id)
+    expect(again.resumed).toBe(false)
+    expect(await prisma.proctoringSession.count({ where: { testAttemptId: attemptAId } })).toBe(1)
   })
 
   it('creates a walk-in session against the other FK', async () => {
+    await prisma.proctoringSession.deleteMany({ where: { walkInAttemptId } })
     const a = await resolveOwnedAttempt(walkInAttemptId, 'walkin', walkInTestId, studentAId)
-    const s = await startSession(a)
-    const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
+    const { session } = await startSession(a)
+    const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: session.id } })
     expect(row.walkInAttemptId).toBe(walkInAttemptId)
     expect(row.testAttemptId).toBeNull()
   })
@@ -237,61 +255,123 @@ describe('startSession', () => {
     await expect(startSession(a)).rejects.toMatchObject({ status: 409 })
   })
 
-  it('refuses with 503 when proctoring is globally disabled', async () => {
+  it('refuses with 503 when proctoring is globally disabled, and needs no storage', async () => {
     process.env.PROCTORING_ENABLED = 'false'
     resetProctoringConfigForTests()
     await prisma.proctoringSession.deleteMany({ where: { walkInAttemptId } })
     const a = await resolveOwnedAttempt(walkInAttemptId, 'walkin', walkInTestId, studentAId)
-    await expect(startSession(a)).rejects.toMatchObject({
-      status: 503,
-      message: 'PROCTORING_DISABLED',
-    })
+    await expect(startSession(a)).rejects.toMatchObject({ status: 503, message: 'PROCTORING_DISABLED' })
+  })
+
+  it('refuses with 503 when proctoring is switched non-operational', async () => {
+    process.env.PROCTORING_OPERATIONAL = 'false'
+    resetProctoringConfigForTests()
+    await prisma.proctoringSession.deleteMany({ where: { walkInAttemptId } })
+    const a = await resolveOwnedAttempt(walkInAttemptId, 'walkin', walkInTestId, studentAId)
+    await expect(startSession(a)).rejects.toMatchObject({ status: 503, message: 'PROCTORING_NOT_OPERATIONAL' })
+  })
+
+  it('resumes an INTERRUPTED session in place and records that it did', async () => {
+    const { a, s } = await freshA()
+    await prisma.proctoringSession.update({ where: { id: s.id }, data: { status: 'INTERRUPTED', endedAt: new Date() } })
+    const resumed = await startSession(a)
+    expect(resumed.resumed).toBe(true)
+    expect(resumed.session.id).toBe(s.id)
+    const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
+    expect(row.status).toBe('ACTIVE')
+    expect(row.endedAt).toBeNull()
+    expect((await eventsOf(s.id, 'PROCTORING_RESUMED')).length).toBe(1)
+  })
+
+  it('does not resume once the attempt deadline has passed', async () => {
+    const { s } = await freshA()
+    await prisma.proctoringSession.update({ where: { id: s.id }, data: { status: 'INTERRUPTED' } })
+    await prisma.testAttempt.update({ where: { id: attemptAId }, data: { expiresAt: new Date(Date.now() - 10 * 60_000) } })
+    try {
+      const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
+      await expect(startSession(a)).rejects.toMatchObject({ status: 409, message: 'PROCTORING_SESSION_CLOSED' })
+    } finally {
+      await prisma.testAttempt.update({ where: { id: attemptAId }, data: { expiresAt: null } })
+    }
+  })
+
+  it('never reopens a COMPLETED session', async () => {
+    const { a, s } = await freshA()
+    await finalizeSession(s.id)
+    const err = await startSession(a).catch(e => e)
+    expect(err).toBeInstanceOf(HttpError)
+    expect(err).toMatchObject({ status: 409, message: 'PROCTORING_SESSION_CLOSED' })
   })
 })
 
 describe('recordHeartbeat', () => {
-  it('advances lastHeartbeatAt', async () => {
-    const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
-    const s = await startSession(a)
-    // Deliberately a small backdate, not minutes: a stale-looking heartbeat
-    // could be picked up by sweepStaleSessions running in a concurrent test
-    // file and marked INTERRUPTED underneath this test.
+  it('advances lastHeartbeatAt and stores device health', async () => {
+    const { s } = await freshA()
     const before = new Date(Date.now() - 5_000)
-    await prisma.proctoringSession.update({
-      where: { id: s.id },
-      data: { lastHeartbeatAt: before, status: 'ACTIVE' },
-    })
-    await recordHeartbeat(s.id, { screenSharing: true, degraded: false })
+    await prisma.proctoringSession.update({ where: { id: s.id }, data: { lastHeartbeatAt: before } })
+    const r = await recordHeartbeat(s.id, HEALTHY)
+    expect(r).toMatchObject({ live: true, status: 'ACTIVE', degraded: false, missed: false })
     const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
     expect(row.lastHeartbeatAt!.getTime()).toBeGreaterThan(before.getTime())
-    expect(row.status).toBe('ACTIVE')
     expect(row.screenShareStarted).toBe(true)
+    expect(row.lastHealth).toMatchObject({ camera: 'ACTIVE', screen: 'ACTIVE', gazeMonitor: 'RUNNING' })
   })
 
-  it('sets DEGRADED when a device is down, and recovers', async () => {
-    const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
-    const s = await startSession(a)
-    await recordHeartbeat(s.id, { screenSharing: true, degraded: true })
+  it('camera stopped: DEGRADED; camera back: ACTIVE again', async () => {
+    const { s } = await freshA()
+    expect((await recordHeartbeat(s.id, { ...HEALTHY, camera: 'ENDED' })).status).toBe('DEGRADED')
     expect((await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })).status).toBe('DEGRADED')
-    await recordHeartbeat(s.id, { screenSharing: true, degraded: false })
-    expect((await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })).status).toBe('ACTIVE')
+    expect((await recordHeartbeat(s.id, HEALTHY)).status).toBe('ACTIVE')
+  })
+
+  it('microphone muted, screen stopped, or no gaze analysis are each DEGRADED', async () => {
+    const { s } = await freshA()
+    expect((await recordHeartbeat(s.id, { ...HEALTHY, microphone: 'MUTED' })).degraded).toBe(true)
+    expect((await recordHeartbeat(s.id, { ...HEALTHY, screen: 'ENDED' })).degraded).toBe(true)
+    expect((await recordHeartbeat(s.id, { ...HEALTHY, gazeMonitor: 'UNAVAILABLE' })).degraded).toBe(true)
+  })
+
+  it('heartbeat failure: a long gap is recorded once, server-side', async () => {
+    const { s } = await freshA()
+    await prisma.proctoringSession.update({ where: { id: s.id }, data: { lastHeartbeatAt: new Date(Date.now() - 120_000) } })
+    expect((await recordHeartbeat(s.id, HEALTHY)).missed).toBe(true)
+    // Heartbeat recovery: the next one on time records nothing more.
+    expect((await recordHeartbeat(s.id, HEALTHY)).missed).toBe(false)
+    const gaps = await eventsOf(s.id, 'HEARTBEAT_MISSED')
+    expect(gaps.length).toBe(1)
+    expect(gaps[0].durationMs).toBeGreaterThanOrEqual(119_000)
+    expect(gaps[0].metadata).toEqual({ source: 'heartbeat' })
+    expect((await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })).missedHeartbeatCount).toBe(1)
+  })
+
+  it('a heartbeat at normal cadence records no gap', async () => {
+    const { s } = await freshA()
+    await prisma.proctoringSession.update({ where: { id: s.id }, data: { lastHeartbeatAt: new Date(Date.now() - 20_000) } })
+    expect((await recordHeartbeat(s.id, HEALTHY)).missed).toBe(false)
   })
 
   it('does not resurrect a finalized session', async () => {
-    const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
-    const s = await startSession(a)
+    const { s } = await freshA()
     await finalizeSession(s.id, 'COMPLETED')
-    await recordHeartbeat(s.id, { screenSharing: true, degraded: false })
-    const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
-    expect(row.status).toBe('COMPLETED')
+    expect((await recordHeartbeat(s.id, HEALTHY)).live).toBe(false)
+    expect((await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })).status).toBe('COMPLETED')
+  })
+})
+
+describe('recordGapIfMissed', () => {
+  it('stores one row for one gap however many callers notice it', async () => {
+    const { s } = await freshA()
+    const since = new Date(Date.now() - 300_000)
+    const now = new Date()
+    expect(await recordGapIfMissed(s.id, since, now, 50_000, 'heartbeat')).toBe(true)
+    expect(await recordGapIfMissed(s.id, since, now, 50_000, 'sweep')).toBe(false)
+    expect((await eventsOf(s.id, 'HEARTBEAT_MISSED')).length).toBe(1)
   })
 })
 
 describe('finalizeSession', () => {
   it('marks COMPLETED and stamps endedAt', async () => {
-    await prisma.proctoringSession.deleteMany({ where: { testAttemptId: attemptAId } })
-    const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
-    const s = await startSession(a)
+    const { s } = await freshA()
     await finalizeSession(s.id)
     const row = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
     expect(row.status).toBe('COMPLETED')
@@ -299,9 +379,7 @@ describe('finalizeSession', () => {
   })
 
   it('is idempotent - a second finalize changes nothing', async () => {
-    await prisma.proctoringSession.deleteMany({ where: { testAttemptId: attemptAId } })
-    const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
-    const s = await startSession(a)
+    const { s } = await freshA()
     await finalizeSession(s.id)
     const first = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })
     await finalizeSession(s.id, 'INTERRUPTED')
@@ -310,26 +388,31 @@ describe('finalizeSession', () => {
     expect(second.endedAt!.getTime()).toBe(first.endedAt!.getTime())
   })
 
-  it('leaves no live session behind, so activeSessionFor reads null', async () => {
-    await prisma.proctoringSession.deleteMany({ where: { testAttemptId: attemptAId } })
-    const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
-    const s = await startSession(a)
+  it('leaves no live session behind', async () => {
+    const { a, s } = await freshA()
     await finalizeSession(s.id)
     expect(await activeSessionFor(a)).toBeNull()
   })
 
-  it('refuses a restart after finalize with 409, not a raw Prisma 500', async () => {
-    // The unique index is on the attempt FK alone, not on (attempt, status), so
-    // a closed session permanently occupies its attempt - by design, one
-    // session per attempt. Without an explicit branch the P2002 escapes
-    // startSession and errorResponse renders it as a generic 500, which tells
-    // the candidate nothing and looks like an outage.
-    await prisma.proctoringSession.deleteMany({ where: { testAttemptId: attemptAId } })
-    const a = await resolveOwnedAttempt(attemptAId, 'scheduled', proctoredScheduleId, studentAId)
-    const s = await startSession(a)
+  it('records the trailing gap of a client that stopped heartbeating before submit', async () => {
+    const { s } = await freshA()
+    await prisma.proctoringSession.update({ where: { id: s.id }, data: { lastHeartbeatAt: new Date(Date.now() - 5 * 60_000) } })
     await finalizeSession(s.id)
-    const err = await startSession(a).catch(e => e)
-    expect(err).toBeInstanceOf(HttpError)
-    expect(err).toMatchObject({ status: 409, message: 'PROCTORING_SESSION_CLOSED' })
+    const gaps = await eventsOf(s.id, 'HEARTBEAT_MISSED')
+    expect(gaps.length).toBe(1)
+    expect(gaps[0].metadata).toEqual({ source: 'finalize' })
+  })
+})
+
+describe('sweepStaleSessions', () => {
+  it('interrupts a stale session, records the gap, and leaves it resumable', async () => {
+    const { a, s } = await freshA()
+    await prisma.proctoringSession.update({ where: { id: s.id }, data: { lastHeartbeatAt: new Date(Date.now() - 10 * 60_000) } })
+    await sweepStaleSessions()
+    expect((await prisma.proctoringSession.findUniqueOrThrow({ where: { id: s.id } })).status).toBe('INTERRUPTED')
+    const gaps = await eventsOf(s.id, 'HEARTBEAT_MISSED')
+    expect(gaps.length).toBe(1)
+    expect(gaps[0].metadata).toEqual({ source: 'sweep' })
+    expect((await startSession(a)).resumed).toBe(true)
   })
 })
