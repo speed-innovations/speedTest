@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronDown, ChevronRight, Loader2, ShieldCheck, ShieldOff } from 'lucide-react'
 import EventTimeline, { type TimelineEvent } from './EventTimeline'
+import type { ProctoringReviewSignal } from '@/lib/proctoring/review-signal'
 
 /**
  * The proctoring section of the results detail modal. Collapsed by default and
@@ -19,8 +20,59 @@ interface Evidence {
     lastHeartbeatAt: string | null
     screenShareStarted: boolean
     gazeWarningCount: number
+    missedHeartbeatCount: number
   } | null
   events: TimelineEvent[]
+  reviewSignal: ProctoringReviewSignal | null
+}
+
+const LEVEL_TEXT: Record<ProctoringReviewSignal['level'], string> = {
+  NONE: 'No notable observations',
+  LOW: 'Low - a few observations',
+  MODERATE: 'Moderate - worth a closer look',
+  ELEVATED: 'Elevated - review this attempt',
+}
+
+const GROUP_TEXT: Record<string, string> = {
+  MULTIPLE_FACES: 'More than one face visible',
+  SCREEN_SHARE_INTERRUPTED: 'Screen sharing interrupted',
+  CAMERA_INTERRUPTED: 'Camera interrupted',
+  FACE_MISSING_LONG: 'Face not visible for a long stretch',
+  FACE_MISSING_BRIEF: 'Face briefly not visible',
+  REPEATED_DOWNWARD_ATTENTION: 'Repeated downward attention',
+  SUSTAINED_DOWNWARD_ATTENTION: 'Sustained downward attention',
+  HEARTBEAT_MISSED: 'Proctoring connection gaps',
+  MICROPHONE_INTERRUPTED: 'Microphone interrupted',
+  TAB_HIDDEN: 'Assessment tab hidden',
+  PAGE_HIDDEN: 'Page closed or navigated away',
+  GAZE_MONITOR_UNAVAILABLE: 'Gaze analysis could not run',
+  LOOKING_AWAY: 'Looking away from the screen',
+  FULLSCREEN_EXITED: 'Left full screen',
+  WINDOW_BLUR: 'Window lost focus',
+}
+
+function ReviewSignalCard({ signal }: { signal: ProctoringReviewSignal }) {
+  return (
+    <div className="rounded-lg border border-gray-200 px-4 py-3 text-sm">
+      <p className="text-gray-700">
+        <span className="font-medium">Review signal:</span> {LEVEL_TEXT[signal.level]}
+      </p>
+      {signal.contributions.length > 0 && (
+        <ul className="mt-2 space-y-0.5 text-xs text-gray-600">
+          {signal.contributions.map(c => (
+            <li key={c.group}>
+              {GROUP_TEXT[c.group] ?? c.group.toLowerCase().replace(/_/g, ' ')} ×{c.count}
+              <span className="text-gray-400"> ({c.strength.toLowerCase()})</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-2 text-xs text-gray-400 leading-relaxed">
+        A prompt for where to look first, built from the observations below. It is not a
+        finding of misconduct and is never used in scoring.
+      </p>
+    </div>
+  )
 }
 
 export default function ProctoringPanel({
@@ -93,7 +145,9 @@ export default function ProctoringPanel({
                 <span>Session <span className="text-gray-700">{evidence.session.status.toLowerCase()}</span></span>
                 <span>Detection version <span className="text-gray-700">{evidence.session.version}</span></span>
                 <span>Screen sharing <span className="text-gray-700">{evidence.session.screenShareStarted ? 'started' : 'never started'}</span></span>
+                <span>Connection gaps <span className="text-gray-700">{evidence.session.missedHeartbeatCount}</span></span>
               </div>
+              {evidence.reviewSignal && <ReviewSignalCard signal={evidence.reviewSignal} />}
               <EventTimeline events={evidence.events} />
               <p className="text-xs text-gray-400 leading-relaxed">
                 Observations describe what the browser detected, not what it means. No video, audio

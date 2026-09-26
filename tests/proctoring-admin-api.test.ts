@@ -142,7 +142,7 @@ describe('getAdminEvidence', () => {
   })
 
   it('returns a null session for a never-proctored attempt rather than throwing', async () => {
-    expect(await getAdminEvidence(unproctoredAttemptId, 'scheduled')).toEqual({ session: null, events: [] })
+    expect(await getAdminEvidence(unproctoredAttemptId, 'scheduled')).toEqual({ session: null, events: [], reviewSignal: null })
   })
 
   it('carries no media reference of any kind', async () => {
@@ -154,6 +154,14 @@ describe('getAdminEvidence', () => {
     const evidence = await getAdminEvidence(scheduledAttemptId, 'scheduled')
     const times = evidence.events.map(e => new Date(e.startedAt).getTime())
     expect(times[0]).toBeLessThanOrEqual(times[1])
+  })
+
+  it('derives an admin-only review signal from the stored observations', async () => {
+    const evidence = await getAdminEvidence(scheduledAttemptId, 'scheduled')
+    expect(evidence.reviewSignal?.name).toBe('PROCTORING_REVIEW_SIGNAL')
+    // One screen-share interruption (strong) and one glance (weak).
+    expect(evidence.reviewSignal?.level).toBe('LOW')
+    expect(evidence.reviewSignal?.contributions.map(c => c.group)).toContain('SCREEN_SHARE_INTERRUPTED')
   })
 })
 

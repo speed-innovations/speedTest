@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/db'
 import type { AttemptKind } from './types'
+import { computeReviewSignal, type ProctoringReviewSignal } from './review-signal'
 
 /**
  * Read model for the admin review UI. Metadata only: a session summary and its
@@ -39,6 +40,8 @@ export interface AdminEvidence {
   /** Null when the attempt was never proctored. Not an error. */
   session: AdminSessionView | null
   events: AdminEventView[]
+  /** Admin-only, computed on read. Never stored, never an input to scoring. */
+  reviewSignal: ProctoringReviewSignal | null
 }
 
 const EVENT_SELECT = {
@@ -56,11 +59,11 @@ const SESSION_SELECT = {
 export async function getAdminEvidence(attemptId: string, type: AttemptKind): Promise<AdminEvidence> {
   const where = type === 'scheduled' ? { testAttemptId: attemptId } : { walkInAttemptId: attemptId }
   const session = await prisma.proctoringSession.findFirst({ where, select: SESSION_SELECT })
-  if (!session) return { session: null, events: [] }
+  if (!session) return { session: null, events: [], reviewSignal: null }
   const events = await prisma.proctoringEvent.findMany({
     where: { proctoringSessionId: session.id },
     select: EVENT_SELECT,
     orderBy: { startedAt: 'asc' },
   })
-  return { session, events }
+  return { session, events, reviewSignal: computeReviewSignal(events) }
 }
