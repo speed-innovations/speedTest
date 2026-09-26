@@ -71,15 +71,24 @@ export class EventQueue {
     this.recent[e.type] = times
 
     if (this.items.length >= this.maxSize) {
-      let evict = 0
-      for (let i = 0; i < this.items.length; i++) {
-        if (this.items[i].severity === 'INFO') { evict = i; break }
-      }
-      this.items.splice(evict, 1)
-      this.droppedCount++
+      this.evictOne()
     }
     this.items.push(e)
     return true
+  }
+
+  /**
+   * Drop exactly one held event: the oldest INFO, or if none remain, the
+   * oldest event overall. Used by both push() and drain()'s requeue path so
+   * the two cannot drift on the size bound's eviction rule.
+   */
+  private evictOne(): void {
+    let evict = 0
+    for (let i = 0; i < this.items.length; i++) {
+      if (this.items[i].severity === 'INFO') { evict = i; break }
+    }
+    this.items.splice(evict, 1)
+    this.droppedCount++
   }
 
   flush(opts: { keepalive?: boolean } = {}): Promise<void> {
@@ -121,9 +130,8 @@ export class EventQueue {
       if (!ok) {
         if (this.closed) return
         this.items = batch.concat(this.items)
-        if (this.items.length > this.maxSize) {
-          this.droppedCount += this.items.length - this.maxSize
-          this.items = this.items.slice(this.items.length - this.maxSize)
+        while (this.items.length > this.maxSize) {
+          this.evictOne()
         }
         return
       }

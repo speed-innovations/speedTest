@@ -74,6 +74,35 @@ describe('EventQueue', () => {
     expect(send.mock.calls[0][1]).toEqual({ keepalive: true })
   })
 
+  it('evicts severity-aware on overflow after a failed batch, not FIFO', async () => {
+    let release: (v: boolean) => void = () => undefined
+    const send = vi.fn((_batch: WireEvent[], _opts: { keepalive: boolean }) => new Promise<boolean>(r => { release = r }))
+    const q = new EventQueue({ send, maxSize: 3, perTypeMax: 100 })
+    const warn1 = ev('LOOKING_LEFT', 'WARN')
+    const warn2 = ev('LOOKING_RIGHT', 'WARN')
+    q.push(warn1)
+    q.push(warn2)
+    const flushed = q.flush() // both WARN events go in flight, blocked on `release`
+    q.push(ev('TAB_VISIBLE', 'INFO'))
+    q.push(ev('TAB_VISIBLE', 'INFO'))
+    const droppedBefore = q.dropped
+    release(false) // the in-flight batch fails and is requeued, now over maxSize
+    await flushed
+
+    expect(q.size).toBe(3)
+    expect(q.dropped).toBe(droppedBefore + 1)
+
+    // Inspect what is actually held by letting the next flush succeed and
+    // capturing the batch it sent.
+    send.mockImplementation((_batch: WireEvent[], _opts: { keepalive: boolean }) => Promise.resolve(true))
+    await q.flush()
+    const held = send.mock.calls[send.mock.calls.length - 1][0] as WireEvent[]
+    const heldIds = held.map(e => e.clientEventId)
+    expect(heldIds).toContain(warn1.clientEventId)
+    expect(heldIds).toContain(warn2.clientEventId)
+    expect(held.filter(e => e.type === 'TAB_VISIBLE').length).toBe(1)
+  })
+
   it('refuses events after close, and forgets what it held', () => {
     const q = new EventQueue({ send: () => Promise.resolve(true), perTypeMax: 100 })
     q.push(ev())
