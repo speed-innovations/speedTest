@@ -1,0 +1,56 @@
+name: Proctoring retention cleanup
+
+# Closes proctoring sessions whose browser stopped sending heartbeats and
+# expires sessions past retention. Catch-up capable and safe to run repeatedly.
+#
+# NOTE: a scheduled workflow only becomes active once it is on the default
+# branch. This file is inert until Part 15 merges it to main.
+on:
+  schedule:
+    - cron: '17 * * * *'   # hourly, off the hour to avoid the scheduler's peak
+  workflow_dispatch:        # manual runs, for draining a backlog
+
+concurrency:
+  group: proctoring-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the cleanup endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ vars.APP_URL || 'https://speedtest-45s1.onrender.com' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::CRON_SECRET is not set"
+            exit 1
+          fi
+
+          # Render's free plan spins down after inactivity and cold-starts in
+          # ~50s, so allow a generous connect timeout rather than failing the
+          # run on a sleeping service.
+          response=$(curl -sS -w '\n%{http_code}' -X POST \
+            --connect-timeout 90 --max-time 300 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${APP_URL}/api/cron/proctoring-cleanup")
+
+          body=$(echo "$response" | sed '$d')
+          code=$(echo "$response" | tail -n 1)
+          echo "$body"
+
+          if [ "$code" != "200" ]; then
+            echo "::error::Cleanup returned HTTP $code"
+            exit 1
+          fi
+
+          # The stale-session sweep closes at most 200 sessions per run
+          # (sweepStaleSessions in src/lib/proctoring/session.ts). A full batch
+          # means more stale sessions are waiting; surface it rather than
+          # letting abandoned sessions sit open until the next hourly run.
+          interrupted=$(echo "$body" | sed -n 's/.*"staleSessionsInterrupted":\([0-9][0-9]*\).*/\1/p')
+          if [ -n "$interrupted" ] && [ "$interrupted" -ge 200 ]; then
+            echo "::warning::Sweep batch was full ($interrupted sessions) - a backlog may remain. Consider a manual run."
+          fi

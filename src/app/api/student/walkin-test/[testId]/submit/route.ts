@@ -10,6 +10,7 @@ import {
   sanitizeAnswers,
   isPastDeadline,
 } from '@/lib/attempt-auth'
+import { finalizeSession } from '@/lib/proctoring/session'
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: string }> }) {
   const params = await ctx.params
@@ -85,6 +86,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: st
 
       return { totalScore, areaScores, applied: updated.count === 1 }
     }, { timeout: 20_000, maxWait: 10_000 })
+
+    // Safety net for a client that died between recording and submitting. The
+    // browser normally finalizes first; this only catches the case where it
+    // could not. Deliberately OUTSIDE the transaction - that one already
+    // carries the whole cohort's submit load - and wrapped, because losing a
+    // candidate's submit over a proctoring bookkeeping failure is unacceptable.
+    // Placed before both return paths so a re-submit still closes the session.
+    try {
+      const proctoringSession = await prisma.proctoringSession.findFirst({
+        where: { walkInAttemptId: attempt.id, status: { in: ['PENDING', 'ACTIVE', 'DEGRADED'] } },
+        select: { id: true },
+      })
+      if (proctoringSession) await finalizeSession(proctoringSession.id, 'COMPLETED')
+    } catch (err) {
+      console.error('Proctoring finalize-on-submit failed:', err)
+    }
 
     if (!result.applied) {
       const current = await prisma.walkInAttempt.findUnique({

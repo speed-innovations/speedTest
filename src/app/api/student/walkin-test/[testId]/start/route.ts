@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { pickQuestionsByConfig } from '@/lib/question-picker'
+import type { AreaConfigInput } from '@/lib/schemas/admin'
 import {
   requireStudent,
   errorResponse,
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: st
       return NextResponse.json({ error: 'Test already submitted' }, { status: 400 })
 
     if (!attempt) {
-      const questionIds = await pickQuestionsByConfig(test.assessmentConfig as any[])
+      const questionIds = await pickQuestionsByConfig(test.assessmentConfig as unknown as AreaConfigInput[])
       try {
         attempt = await prisma.walkInAttempt.create({
           data: {
@@ -53,6 +54,22 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ testId: st
         attempt = await prisma.$transaction(tx => tx.walkInAttempt.findUniqueOrThrow({
           where: { testId_studentId: { testId: params.testId, studentId: student.studentId } },
         }))
+      }
+    }
+
+    // A modified client could skip the proctoring calls entirely and come
+    // straight here. Refuse to start the clock unless a live session exists, so
+    // the server-side record is trustworthy even when the browser is not.
+    if (test.proctoringEnabled) {
+      const live = await prisma.proctoringSession.findFirst({
+        where: { walkInAttemptId: attempt.id, status: { in: ['ACTIVE', 'DEGRADED'] } },
+        select: { id: true },
+      })
+      if (!live) {
+        return NextResponse.json(
+          { error: 'Proctoring must be started before this assessment.', code: 'PROCTORING_REQUIRED' },
+          { status: 409 }
+        )
       }
     }
 

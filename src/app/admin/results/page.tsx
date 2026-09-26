@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { Download, Search, Eye, X, FileText, CheckCircle, XCircle, AlertTriangle, Flag } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { AREA_LABELS_SHORT as AREA_LABELS } from '@/lib/areas'
+import ProctoringPanel from '@/components/proctoring/admin/ProctoringPanel'
 
 const DIFF_COLOR: Record<string, string> = { EASY: 'text-green-600', MEDIUM: 'text-yellow-600', HARD: 'text-red-600' }
 
@@ -14,6 +15,9 @@ export default function ResultsPage() {
   const [resumePreview, setResumePreview] = useState<{ studentId: string; name: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [detailReport, setDetailReport] = useState<any>(null)
+  // The panel needs the attempt's identity, and the detail response does not
+  // carry it back. Same addressing as the detail route: id plus scheduled|walkin.
+  const [detailRef, setDetailRef] = useState<{ attemptId: string; type: 'scheduled' | 'walkin' } | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
 
   useEffect(() => {
@@ -47,6 +51,7 @@ export default function ResultsPage() {
 
   async function openDetailReport(attemptId: string, type: string) {
     setDetailLoading(true)
+    setDetailRef({ attemptId, type: type === 'walkin' ? 'walkin' : 'scheduled' })
     try {
       const res = await fetch(`/api/admin/results/detail?attemptId=${attemptId}&type=${type}`)
       const data = await res.json()
@@ -175,7 +180,7 @@ export default function ResultsPage() {
                   </p>
                 )}
               </div>
-              <button onClick={() => setDetailReport(null)}
+              <button onClick={() => { setDetailReport(null); setDetailRef(null) }}
                 className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg">
                 <X size={20} />
               </button>
@@ -231,6 +236,20 @@ export default function ResultsPage() {
                     <AlertTriangle size={14} />
                     {detailReport.violations.length} violation(s) detected
                   </div>
+                )}
+
+                {/*
+                  Proctoring evidence, collapsed. The violations strip above
+                  stays as it is: tab switches and proctoring observations are
+                  different signals from different mechanisms, and folding them
+                  into one number would misrepresent both.
+                */}
+                {detailRef && (
+                  <ProctoringPanel
+                    attemptId={detailRef.attemptId}
+                    type={detailRef.type}
+                    questionOrder={detailReport.responses?.map((r: any) => r.questionId)}
+                  />
                 )}
 
                 {/* Question-by-question */}

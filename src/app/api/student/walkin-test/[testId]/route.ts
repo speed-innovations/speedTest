@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { pickQuestionsByConfig } from '@/lib/question-picker'
+import type { AreaConfigInput } from '@/lib/schemas/admin'
 import {
   requireStudent,
   errorResponse,
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ testId: str
 
     // Server picks and persists the question set before the student can influence it.
     if (!attempt) {
-      const questionIds = await pickQuestionsByConfig(test.assessmentConfig as any[])
+      const questionIds = await pickQuestionsByConfig(test.assessmentConfig as unknown as AreaConfigInput[])
       attempt = await prisma.walkInAttempt.create({
         data: {
           testId: params.testId,
@@ -62,6 +63,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ testId: str
     if (!attempt.startedAt) {
       return NextResponse.json({
         test: testPayload,
+        // testPayload deliberately does not carry the whole Test row, so the
+        // flag is lifted out explicitly rather than riding along.
+        proctoringEnabled: test.proctoringEnabled,
         started: false,
         isSubmitted: false,
         questionCount: assigned.length,
@@ -88,6 +92,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ testId: str
 
     return NextResponse.json({
       test: testPayload,
+      proctoringEnabled: test.proctoringEnabled,
       started: true,
       isSubmitted: false,
       questions: orderedQuestions,

@@ -23,6 +23,7 @@ export default function CreateTestPage() {
     passingMarks: 40,
     jobOpeningId: '',
     isWalkIn: false,
+    proctoringEnabled: false,
   })
   const [areas, setAreas] = useState<AreaConfig[]>([
     { area: 'APTITUDE', count: 20, easyPct: 30, mediumPct: 50, hardPct: 20 }
@@ -73,7 +74,10 @@ export default function CreateTestPage() {
           isWalkIn: form.isWalkIn,
         })
       })
-      if (!res.ok) throw new Error(await res.text())
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error((data && typeof data.error === 'string' && data.error) || 'Failed to create test')
+      }
       toast.success('Test created successfully!')
       router.push('/admin/tests')
       router.refresh()
@@ -132,6 +136,15 @@ export default function CreateTestPage() {
             <label htmlFor="isWalkIn" className="text-sm">
               <span className="font-medium text-orange-700">Walk-in Mode (Lab)</span>
               <span className="text-orange-600 block text-xs">Enable for candidates present in lab. No schedule needed — timer starts when candidate begins.</span>
+            </label>
+          </div>
+          <div className="flex items-center gap-3 p-3 bg-brand-purple/5 rounded-lg border border-brand-purple/20">
+            <input type="checkbox" id="proctoringEnabled" checked={form.proctoringEnabled}
+              onChange={e => setForm(f => ({ ...f, proctoringEnabled: e.target.checked }))}
+              className="w-4 h-4 text-brand-purple rounded" />
+            <label htmlFor="proctoringEnabled" className="text-sm">
+              <span className="font-medium text-brand-purple">Proctored Assessment</span>
+              <span className="text-gray-600 block text-xs">Monitors camera, microphone and screen-sharing status; gaze analysis runs locally in the candidate&apos;s browser. Candidates must grant camera, microphone and screen sharing before the timer starts. No video, audio or screenshots are recorded or stored.</span>
             </label>
           </div>
         </div>

@@ -3,6 +3,11 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import QuestionText from '@/components/QuestionText'
+import ProctoringSetup from '@/components/proctoring/ProctoringSetup'
+import ProctoringRecovery from '@/components/proctoring/ProctoringRecovery'
+import ProctoringStatusIndicator from '@/components/proctoring/ProctoringStatusIndicator'
+import ProctoringExamOverlay from '@/components/proctoring/ProctoringExamOverlay'
+import { useProctoring } from '@/lib/proctoring/client/use-proctoring'
 import { Clock, AlertTriangle, ChevronLeft, ChevronRight, CheckCircle, Flag, Zap } from 'lucide-react'
 
 interface Question {
@@ -30,8 +35,27 @@ export default function WalkInTestPage() {
   const [submitting, setSubmitting] = useState(false)
   const [testStarted, setTestStarted] = useState(false)
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false)
+  const [proctoringEnabled, setProctoringEnabled] = useState(false)
+  const [alreadyStarted, setAlreadyStarted] = useState(false)
+  const [proctoringBusy, setProctoringBusy] = useState(false)
   const timerRef = useRef<NodeJS.Timeout>()
   const startTimeRef = useRef<number>(0)
+
+  // Proctoring lives entirely in this hook. Both candidate pages are
+  // near-identical and a change made to one and not the other is this repo's
+  // standing failure mode, so neither page holds any proctoring logic of its
+  // own - only this call and the small blocks that render its output.
+  const proctoring = useProctoring({
+    enabled: proctoringEnabled,
+    attemptId,
+    kind: 'walkin',
+    parentId: String(testId ?? ''),
+    // Client-supplied and membership-validated server-side, exactly as
+    // violation/route.ts already does it. The server stores the assigned
+    // question set but never a cursor, so it cannot derive this itself.
+    currentQuestionId: questions[currentIdx]?.id ?? null,
+    alreadyStarted,
+  })
 
   // Load test data
   useEffect(() => {
@@ -48,6 +72,8 @@ export default function WalkInTestPage() {
         setQuestions(data.questions || [])
         setQuestionCount(data.questionCount ?? 0)
         if (data.attemptId) setAttemptId(data.attemptId)
+        setProctoringEnabled(!!data.proctoringEnabled)
+        setAlreadyStarted(!!data.started)
 
         if (data.isSubmitted) {
           setSubmitted(true)
@@ -61,7 +87,9 @@ export default function WalkInTestPage() {
             if (questionIds.has(qId)) filtered[qId] = ans as string
           }
           setAnswers(filtered)
-          setTestStarted(true)
+          // A proctored attempt cannot resume silently: getDisplayMedia needs a
+          // user gesture, and there is none on a reload. Recovery asks for one.
+          if (!data.proctoringEnabled) setTestStarted(true)
         }
         setLoading(false)
       })
@@ -159,6 +187,37 @@ export default function WalkInTestPage() {
     }
   }
 
+  /**
+   * The proctored entry point. Permissions and the proctoring session come
+   * first, and only then does startTest() run - /start refuses to start the
+   * clock with PROCTORING_REQUIRED unless a live session already exists.
+   */
+  async function startProctoredTest() {
+    setProctoringBusy(true)
+    try {
+      const ok = await proctoring.requestPermissionsAndStart()
+      if (ok) await startTest()
+    } finally {
+      setProctoringBusy(false)
+    }
+  }
+
+  /**
+   * Recovery after a reload. This creates nothing: the session endpoint is
+   * idempotent and hands back the attempt's existing session. The clock is
+   * already running, so startTest() is not called again - the exam UI is simply
+   * revealed once capture is live.
+   */
+  async function resumeProctoredTest() {
+    setProctoringBusy(true)
+    try {
+      const ok = await proctoring.requestPermissionsAndStart()
+      if (ok) setTestStarted(true)
+    } finally {
+      setProctoringBusy(false)
+    }
+  }
+
   const saveTimerRef = useRef<NodeJS.Timeout>()
   const pendingSavesRef = useRef<Record<string, string>>({})
 
@@ -232,9 +291,18 @@ export default function WalkInTestPage() {
     // the server grades on its own deadline, so the wait costs no marks.
     await new Promise(r => setTimeout(r, Math.floor(Math.random() * 4000)))
     setSubmitting(true)
+    // Pending proctoring events go before the answers; monitoring keeps
+    // running. A proctoring failure can never block a submit.
+    try { await proctoring.flushPending() } catch { /* best effort */ }
     try {
       const ok = await submitWithRetry()
-      if (ok) { setSubmitted(true); toast.success('Time up! Test submitted automatically.') }
+      if (ok) {
+        setSubmitted(true)
+        toast.success('Time up! Test submitted automatically.')
+        // Only now: a failed submit must leave the candidate monitored and
+        // able to retry. The submit route has already closed the session.
+        try { await proctoring.finalize() } catch { /* best effort */ }
+      }
     } catch {
       toast.error('Auto-submit failed. Click "Submit Test" to retry.')
     }
@@ -245,12 +313,18 @@ export default function WalkInTestPage() {
     if (!attemptId) return
     setSubmitting(true)
     setShowSubmitConfirm(false)
+    // Pending proctoring events are delivered before the answers go, without
+    // stopping monitoring, and a proctoring failure can never block a submit.
+    try { await proctoring.flushPending() } catch { /* best effort */ }
     try {
       const ok = await submitWithRetry()
       if (ok) {
         setSubmitted(true)
         clearInterval(timerRef.current)
         toast.success('Test submitted successfully!')
+        // Torn down only after the submit succeeded: if it fails, monitoring
+        // stays up, the session stays live and a retry (or reload) works.
+        try { await proctoring.finalize() } catch { /* best effort */ }
       }
     } catch (err: any) {
       toast.error('Submit failed. Your answers are saved. Please try again.', { duration: 5000 })
@@ -297,6 +371,23 @@ export default function WalkInTestPage() {
     )
   }
 
+  // A proctored attempt that is already running but has no live capture must
+  // never show the questions. The reload path sets testStarted without any user
+  // gesture and getDisplayMedia requires one, so recovery - with its explicit
+  // button - is the only legal way back into capture.
+  if (proctoring.needsRecovery && !submitted) {
+    return (
+      <ProctoringRecovery
+        state={proctoring.state}
+        startError={proctoring.startError}
+        devices={proctoring.devices}
+        resuming={proctoringBusy}
+        timeLeftLabel={timeLeft > 0 ? formatTime(timeLeft) : undefined}
+        onResume={resumeProctoredTest}
+      />
+    )
+  }
+
   // Instructions / Start Screen
   if (!testStarted && !submitted) {
     return (
@@ -340,9 +431,22 @@ export default function WalkInTestPage() {
             </ul>
           </div>
 
-          <button onClick={startTest} className="btn-primary w-full justify-center py-3 text-base">
-            🚀 Start Test
-          </button>
+          {proctoringEnabled ? (
+            <ProctoringSetup
+              support={proctoring.support}
+              devices={proctoring.devices}
+              state={proctoring.state}
+              startError={proctoring.startError}
+              starting={proctoringBusy}
+              cameraLive={proctoring.capture.cameraLive}
+              videoRef={proctoring.videoRef}
+              onStart={startProctoredTest}
+            />
+          ) : (
+            <button onClick={startTest} className="btn-primary w-full justify-center py-3 text-base">
+              🚀 Start Test
+            </button>
+          )}
         </div>
       </div>
     )
@@ -375,6 +479,7 @@ export default function WalkInTestPage() {
   // Active Test UI
   return (
     <div className="h-screen flex flex-col bg-gray-100" onContextMenu={e => e.preventDefault()}>
+      {proctoringEnabled && <ProctoringExamOverlay proctoring={proctoring} />}
       {/* Top bar */}
       <div className="flex items-center justify-between px-5 py-3 bg-brand-purple text-white shadow-lg">
         <div>
@@ -390,6 +495,9 @@ export default function WalkInTestPage() {
             <div className="flex items-center gap-1.5 bg-orange-500/20 text-orange-200 px-3 py-1.5 rounded-lg text-xs">
               <AlertTriangle size={13} /> {violations.length} violation{violations.length > 1 ? 's' : ''}
             </div>
+          )}
+          {proctoringEnabled && (
+            <ProctoringStatusIndicator variant="chip" state={proctoring.state} health={proctoring.health} />
           )}
           <div className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-mono font-bold ${timeLeft < 300 ? 'bg-red-500/30 text-red-200' : 'bg-white/10'}`}>
             <Clock size={16} /> {formatTime(timeLeft)}

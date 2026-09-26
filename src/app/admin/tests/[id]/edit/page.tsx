@@ -25,6 +25,7 @@ export default function EditTestPage() {
     passingMarks: 40,
     jobOpeningId: '',
     isWalkIn: false,
+    proctoringEnabled: false,
     status: 'DRAFT',
   })
   const [areas, setAreas] = useState<AreaConfig[]>([])
@@ -42,6 +43,7 @@ export default function EditTestPage() {
         passingMarks: test.passingMarks,
         jobOpeningId: test.jobOpeningId || '',
         isWalkIn: test.isWalkIn || false,
+        proctoringEnabled: test.proctoringEnabled || false,
         status: test.status,
       })
       const configs = ((test.assessmentConfig as any[]) || []).map((c: any) => ({
@@ -96,7 +98,10 @@ export default function EditTestPage() {
           jobOpeningId: form.jobOpeningId || null,
         })
       })
-      if (!res.ok) throw new Error(await res.text())
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error((data && typeof data.error === 'string' && data.error) || 'Failed to update test')
+      }
       toast.success('Test updated successfully!')
       router.push('/admin/tests')
       router.refresh()
@@ -170,6 +175,15 @@ export default function EditTestPage() {
             <label htmlFor="isWalkIn" className="text-sm">
               <span className="font-medium text-orange-700">Walk-in Mode (Lab)</span>
               <span className="text-orange-600 block text-xs">Enable for candidates present in lab. No schedule needed — timer starts when candidate begins.</span>
+            </label>
+          </div>
+          <div className="flex items-center gap-3 p-3 bg-brand-purple/5 rounded-lg border border-brand-purple/20">
+            <input type="checkbox" id="proctoringEnabled" checked={form.proctoringEnabled}
+              onChange={e => setForm(f => ({ ...f, proctoringEnabled: e.target.checked }))}
+              className="w-4 h-4 text-brand-purple rounded" />
+            <label htmlFor="proctoringEnabled" className="text-sm">
+              <span className="font-medium text-brand-purple">Proctored Assessment</span>
+              <span className="text-gray-600 block text-xs">Monitors camera, microphone and screen-sharing status; gaze analysis runs locally in the candidate&apos;s browser. Candidates must grant camera, microphone and screen sharing before the timer starts. No video, audio or screenshots are recorded or stored.</span>
             </label>
           </div>
         </div>

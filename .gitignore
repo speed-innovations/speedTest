@@ -45,3 +45,6 @@ prisma/*.db-journal
 .open-next
 .wrangler
 .dev.vars
+
+# claude code - personal machine-local permission allowlist, not shared
+.claude/settings.local.json

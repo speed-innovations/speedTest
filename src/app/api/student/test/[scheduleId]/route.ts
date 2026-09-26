@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { pickQuestionsByConfig } from '@/lib/question-picker'
+import type { AreaConfigInput } from '@/lib/schemas/admin'
 import {
   requireStudent,
   errorResponse,
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ scheduleId:
     // The server owns the question set. It is chosen and persisted here, before
     // the student can influence it, and never accepted from the request body.
     if (!attempt) {
-      const questionIds = await pickQuestionsByConfig(schedule.test.assessmentConfig as any[])
+      const questionIds = await pickQuestionsByConfig(schedule.test.assessmentConfig as unknown as AreaConfigInput[])
       const where = {
         scheduleId_studentId: { scheduleId: params.scheduleId, studentId: student.studentId },
       }
@@ -77,6 +78,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ scheduleId:
     if (!attempt.startedAt) {
       return NextResponse.json({
         schedule,
+        // Lifted out of the nested schedule.test so the client reads one
+        // top-level flag rather than digging through the payload.
+        proctoringEnabled: schedule.test.proctoringEnabled,
         started: false,
         isSubmitted: false,
         questionCount: assigned.length,
@@ -103,6 +107,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ scheduleId:
 
     return NextResponse.json({
       schedule,
+      proctoringEnabled: schedule.test.proctoringEnabled,
       started: true,
       isSubmitted: false,
       questions: orderedQuestions,
