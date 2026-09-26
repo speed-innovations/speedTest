@@ -110,12 +110,14 @@ describe('/start on a proctored scheduled test', () => {
     await setSession({ testAttemptId: proctoredAttemptId }, null)
     const res = await scheduled(proctoredScheduleId, { proctoringActive: true, sessionId: 'made-up' })
     expect(res.status).toBe(409)
+    expect(await startedAt('scheduled', proctoredAttemptId)).toBeNull()
   })
 
   it('refuses an INTERRUPTED or COMPLETED session', async () => {
     for (const status of ['INTERRUPTED', 'COMPLETED'] as const) {
       await setSession({ testAttemptId: proctoredAttemptId }, status)
       expect((await scheduled(proctoredScheduleId)).status).toBe(409)
+      expect(await startedAt('scheduled', proctoredAttemptId)).toBeNull()
     }
   })
 
