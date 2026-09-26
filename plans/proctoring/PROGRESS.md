@@ -696,3 +696,138 @@ Verification: `npx tsc --noEmit -p tsconfig.json` exit 0; `npm test` exit 0,
 **302 passed across 27 files**, run **six consecutive times** after the
 parallelism fix; `npx next build` exit 0. `scripts/tsconfig.json` not run — no
 scripts touched.
+
+### Live-monitoring phase — 2026-09-26
+
+Tasks 1–15 of `live-monitoring-plan.md` (the phase that replaced the
+media-recording design). Commit hashes as recorded by each task; two hashes
+means the task landed in two commits.
+
+| Task | Description | Commit(s) |
+|---|---|---|
+| 0 | Spec and implementation plan | `ff1b34b` |
+| 1 | Remove media storage, uploads and quota | `a465b1c` |
+| 2 | Metadata event taxonomy and migration | `56610cb` |
+| 3 | Detection config, frame signals and fusion | `3444336` |
+| 4 | Median baseline and temporal engine | `522604e` |
+| 5 | Behaviour tracker, detection pipeline, warning copy | `a46d5e6` |
+| 6 | MediaPipe shell on the fusion pipeline, rVFC, CPU fallback | `42f55fa` |
+| 7 | Integrity monitor for tracks and page events | `c19f6e9` |
+| 8 | Bounded, rate-capped event queue; severity-aware overflow on requeue | `4691106` + `2d4622b` |
+| 9 | Session-bound events and heartbeats, server-side gaps, resume, stale-sweep recheck, session rate limit | `fd94621` + `4efa9d5` |
+| 10 | `/start` gate pinned for both attempt kinds; clock stays unset on refused starts | `bd7c8e8` + `d312bb2` |
+| 11 | Client hook on live monitoring (no recorder, no uploads); cancel in-flight starts, keep events across interruption | `065a9aa` + `bd85108` |
+| 12 | Visible monitoring panel, integrity notices, honest setup copy | `6f8703e` |
+| 13 | Development-only diagnostics panel | `deeaf61` |
+| 14 | Admin-only `PROCTORING_REVIEW_SIGNAL` | `b239288` |
+| 15 | No-media guard test, docs, security review, ledger | this commit |
+
+Notes carried forward from this phase:
+
+- Parts 13 (Playwright E2E) and 14 (docs and local verification) were written
+  for the media design. Their part files are stale and must be rewritten
+  against `live-monitoring-plan.md` before they are run.
+- Part 15 (release) is still blocked. It must apply **both** proctoring
+  migrations to Supabase by hand, in order, and must no longer set up R2.
+- The sign convention in `DETECTION_CONFIG.signs` is **unverified** until the
+  owner completes the manual script in Step 6 (below, in the Task 15 report).
+- Owner-local cleanup: `.env` may still hold `PROCTORING_STORAGE_PROVIDER`,
+  `R2_*` and the gaze `*_MS` variables. They are now ignored and can be
+  deleted.
+
+#### Security review (spec P28)
+
+Verified against the running code and the cited tests (grepped for the
+`it(`/`test(` title, then opened and read each one).
+
+| # | Question | Answer | Evidence |
+|---|---|---|---|
+| 1 | Start without a valid proctoring session? | No: `/start` returns 409 `PROCTORING_REQUIRED` and the clock stays unset | `proctoring-start-gate.test.ts` → `'refuses without any proctoring session, and the clock does not start'` |
+| 2 | Disable the camera without an event? | No: track `ended`/`mute` emits `CAMERA_INTERRUPTED` (`proctoring-integrity-monitor.test.ts` → `'camera stopped: CAMERA_INTERRUPTED and ENDED'`); the heartbeat marks the session `DEGRADED` server-side (`proctoring-session-api.test.ts` → `'camera stopped: DEGRADED; camera back: ACTIVE again'`); killing the script entirely leaves a server-side `HEARTBEAT_MISSED` via heartbeat gap, sweep, or trailing gap at submit (`proctoring-session-api.test.ts` → `'heartbeat failure: a long gap is recorded once, server-side'`, `'interrupts a stale session, records the gap, and leaves it resumable'`, `'records the trailing gap of a client that stopped heartbeating before submit'`) | as cited |
+| 3 | Stop screen sharing undetected? | No: `SCREEN_SHARE_INTERRUPTED` (`proctoring-integrity-monitor.test.ts` → `'screen sharing stopped: SCREEN_SHARE_INTERRUPTED, never assumed still active'`), a persistent banner and resume needing a click (`proctoring-candidate-ui.test.tsx` → `'screen sharing stopped: the ticket message and a resume button needing a click'`), `DEGRADED` on the next heartbeat (`proctoring-session-api.test.ts` → `'microphone muted, screen stopped, or no gaze analysis are each DEGRADED'`) | as cited |
+| 4 | Send fake events for another session? | No: 404 when `sessionId` is not the caller's own live session; nothing stored | `proctoring-student-routes.test.ts` → `'refuses another candidate\'s session id with 404 and stores nothing anywhere'` |
+| 5 | Submit another candidate's session id? | No: the same 404, for events and heartbeat | `proctoring-student-routes.test.ts` → `'refuses another candidate\'s attempt with 404'`, `'refuses a mismatched session id with 404'` |
+| 6 | Bypass the UI and call `/start`? | No: the gate is server-side and ignores the body | `proctoring-start-gate.test.ts` → `'ignores a client that simply claims proctoring is active'` |
+| 7 | Cause duplicate event spam? | Bounded: clientEventId dedup, batch/session caps, per-type rate cap client-side | `proctoring-events-api.test.ts` → `'does not inflate the gaze count when a batch is replayed'`, `'stores only the new events from a partially overlapping batch'`, `'stops storing at the per-session ceiling'`; `proctoring-student-routes.test.ts` → `'rate-limits a client streaming batches'`; `proctoring-event-queue.test.ts` → `'caps each type per window, so a stuck condition cannot spam'` |
+| 8 | Cause an unbounded memory queue? | No: queue ≤ 200 with INFO-first eviction (`event-queue.ts` `maxSize` default 200), behaviour tracker ≤ 50 per condition (`detection-config.ts` `maxTrackedOccurrences: 50`), baseline ≤ 200 samples (`baseline*.ts` `MAX_SAMPLES = 200`), rate-limiter map ≤ 10k keys (`rate-limit.ts` `MAX_KEYS = 10_000`) | `proctoring-event-queue.test.ts` → `'never holds more than maxSize, evicting INFO before WARN'`, `'evicts severity-aware on overflow after a failed batch, not FIFO'`; `proctoring-behaviour-tracker.test.ts` → `'keeps its memory bounded'` |
+| 9 | Leave the camera running after submission? | No: `finalize` and unmount stop every track, cancel frame callbacks, clear timers, close the queue and reset the pipeline | `proctoring-use-proctoring.test.tsx` → `'stops every track on unmount'`, `'finalize stops every track, flushes, closes the session and stops heartbeating'` |
+| 10 | Non-proctored exam affected? | No: hook inert (no prompt, no fetch), `/start` unchanged, no session created | `proctoring-use-proctoring.test.tsx` → `'does nothing whatsoever when proctoring is disabled'`; `proctoring-start-gate.test.ts` → `'starts exactly as before, with no proctoring session and none created'` |
+
+Additional deltas verified in code for this ledger entry (not separate table
+rows, but cited so the next reader does not have to re-derive them):
+- The stale-heartbeat sweep (`sweepStaleSessions`, `src/lib/proctoring/session.ts`)
+  re-checks staleness inside its `updateMany` `where` clause, not just the
+  earlier `findMany` — a heartbeat landing between the two cannot be
+  overridden by a sweep that saw stale data a moment ago. No dedicated race
+  test exists for this; it is confirmed by reading the code (the `where`
+  clause is repeated verbatim on the update) and covered indirectly by
+  `'never interrupts a session with a fresh heartbeat, and records no gap'`.
+- `PROCTORING_RESUMED` carries `interruptedAt` metadata, confirmed by
+  `proctoring-session-api.test.ts` → `'resumes an INTERRUPTED session in
+  place and records that it did'` (asserts `metadata.interruptedAt` is a
+  number).
+- `POST /api/student/proctoring/session` is rate-limited at 10/min per
+  student (`rateLimit(`session:${student.studentId}`, 10, 60_000)` in
+  `src/app/api/student/proctoring/session/route.ts`), confirmed by
+  `proctoring-student-routes.test.ts` → `'rate-limits repeated start
+  requests'`.
+- Ten consecutive gaze inference errors set gaze health to `UNAVAILABLE` and
+  send `GAZE_MONITOR_UNAVAILABLE` once per generation, confirmed by
+  `proctoring-use-proctoring.test.tsx` → `'only ten consecutive inference
+  errors mark gaze UNAVAILABLE, reported once'`.
+- Events sent while the server session is interrupted are kept and re-sent
+  after resume, confirmed by `proctoring-use-proctoring.test.tsx` →
+  `'keeps events refused by a closed session and delivers them after
+  resume'`.
+- Start/resume flows check `isCancelled()` (unmount or finalize) after every
+  `await`, confirmed by `proctoring-use-proctoring.test.tsx` → `'unmount
+  while the camera prompt is pending stops every track and sends nothing
+  afterwards'`, `'finalize while the session is being opened wins: COMPLETED,
+  tracks stopped, no heartbeat loop'`, `'a second resume while one is
+  pending returns false at once'`.
+
+**Residual risk, accepted and not fixed:** there is no server-written
+"degraded" event type distinct from the session status column, and a
+modified client can report healthy devices in its own heartbeat payload —
+only the session's `DEGRADED` status (server-derived from what the client
+*chooses* to report) and the gap/interruption record are trustworthy. Only a
+server-side media check could close that, and this phase forbids media.
+
+**GAP found during Step 5 build verification, not fixed:** the first
+`.next/static` grep (`Proctoring diagnostics\|diag-iris-x`) is expected to
+produce no output, but production build `2026-09-26` matched one chunk,
+`.next/static/chunks/5363-be52d63da8e1f932.js`, containing the literal string
+`"Proctoring diagnostics (dev only)"` and the `diag-iris-x` test id. The
+runtime behaviour is correct and is pinned by
+`tests/proctoring-diagnostics-panel.test.tsx` → `'renders nothing unless
+diagnostics are enabled (the production case)'` and
+`tests/proctoring-diagnostics.test.ts` → `'is off outside development'` — the
+panel genuinely never renders in production, because `DIAGNOSTICS_ENABLED`
+folds to `false` there. What does not happen is bundle-level elimination of
+the JSX text: `ProctoringDiagnostics`'s `enabled` parameter defaults to the
+imported `DIAGNOSTICS_ENABLED` constant, and the minifier does not fold that
+default across the module boundary into the `if (!enabled) return null`
+guard, so the dead branch's source text — field labels and the `dev only`
+string, no thresholds or numbers — ships inert in the client bundle. Left as
+a GAP rather than fixed here: closing it needs a component-boundary change
+(e.g. an inline, same-file `process.env` check, or gating the import itself)
+that risks touching the two tests above which pass `enabled` explicitly as an
+override, and Task 15's scope authorizes product fixes only for gaps found in
+the Step 4 security review, not Step 5 build verification. See the Task 15
+report for the exact grep output.
+
+#### Verification
+
+`npx tsc --noEmit -p tsconfig.json`: exit 0.
+
+`npx vitest run`: **35 files, 398 tests, all passed** (includes the 4 new
+`tests/proctoring-no-media.test.ts` cases).
+
+`npm run build`: exit 0.
+
+`grep -rl "Proctoring diagnostics\|diag-iris-x" .next/static`: **one hit** —
+see the GAP above. Not clean.
+
+`grep -rlE "R2_|X-Amz|MediaRecorder" .next/static`: no output. Clean.
+
+`npm run lint`: **unavailable** — no eslint configuration in this repo.

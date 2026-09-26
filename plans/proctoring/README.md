@@ -2,10 +2,12 @@
 
 Read this file plus **one** part file per session. Nothing else is required.
 
-**Goal:** add optional, privacy-conscious proctoring (webcam+mic recording,
-once-per-minute screen snapshots, local MediaPipe gaze detection, presigned
-Cloudflare R2 storage, 72-hour retention, admin review) to the SpeedTest
-assessment platform without changing any existing behaviour.
+**Goal:** Optional, live proctoring for the SpeedTest assessment platform:
+in-browser MediaPipe detection, visible monitoring, warnings, tamper and
+interruption detection, and server-side logging of metadata events. No video,
+audio or screenshots are recorded, stored or uploaded, so no storage
+credentials are needed. The earlier media-recording design (Parts 2, 3, 5, 7,
+10) was removed in the live-monitoring phase: `live-monitoring-plan.md`.
 
 **Spec:** the proctoring PRD (95 sections), supplied by the product owner.
 **Plan of record:** this directory. `PROGRESS.md` is the ledger.
@@ -53,26 +55,6 @@ and `walkInAttemptId` — with a DB `CHECK` enforcing exactly one non-null.
 `ProctoringAsset` and `ProctoringEvent` reference only `proctoringSessionId`, so
 the dual-ness is contained to one table. Preserves referential integrity and
 cascades, which a polymorphic `(kind, id)` pair would discard.
-
-### 2. The 7 GB cap allows ~75 proctored attempts per 3 days
-
-| Quantity | Value |
-|---|---|
-| Video + audio per attempt (160+32 kbps, 60 min) | 86.4 MB |
-| Screenshots per attempt (60 × 100 KB) | 6 MB |
-| **Actual stored per attempt** | **92.4 MB** |
-| Reserved per attempt (×1.2) | 111 MB |
-| Concurrency ceiling | ~63 simultaneous |
-| **Rolling ceiling (media held 72h)** | **~75 attempts per 3-day window** |
-
-The rolling ceiling binds, and it is easy to misread. A reservation is released
-at submission, but **the media it produced stays for the full 72 hours**.
-Staggering a 200-student drive into waves does not help: wave four still competes
-with wave one's media.
-
-`PROCTORING_STORAGE_SAFETY_BYTES = 7000000000` per the PRD, chosen knowingly. So
-"storage limit reached" is a **routine** state, not an edge case — the pre-check
-must present it calmly and the admin page must surface remaining capacity.
 
 ### 3. No scheduled execution exists anywhere
 
@@ -148,35 +130,39 @@ carrying cohort submit load. The "mark session COMPLETED" safety net runs
 
 ---
 
-## Architecture
-
-### Storage: one interface, two providers
+## Architecture (live monitoring)
 
 ```
-src/lib/proctoring/storage/types.ts   ObjectStorage interface
-src/lib/proctoring/storage/r2.ts      CloudflareR2Storage
-src/lib/proctoring/storage/mock.ts    MockStorage (in-memory)
-src/lib/proctoring/storage/index.ts   selection via PROCTORING_STORAGE_PROVIDER
+Camera + mic (getUserMedia)       Screen (getDisplayMedia)
+        │ browser memory only             │ held only to detect its end
+        ▼                                 ▼
+MediaPipe Face Landmarker        IntegrityMonitor ◄── tracks: ended / mute / unmute
+ (gaze-monitor.ts, ~6 FPS,          │                page: visibility, pagehide,
+  rVFC → rAF, GPU → CPU)            │                fullscreen, blur / focus
+        ▼                           │
+extractFrameSignals  (face count, yaw/pitch/roll, iris X/Y, face size, quality)
+        ▼                           │
+BaselineCollector    (~3 s median personal baseline)
+        ▼                           │
+fuseSignals          (head + eyes agreement → direction + confidence)
+        ▼                           │
+TemporalEngine       (NORMAL → POSSIBLE → SUSTAINED → WARNING → COOLDOWN)
+        ▼                           │
+BehaviourTracker     (sustained / repeated downward attention)
+        ▼                           ▼
+  WarningGate → candidate banners      EventQueue (bounded, rate-capped, batched)
+                                            ▼
+          POST /events · /heartbeat (session-bound) → ProctoringEvent rows (metadata)
+                                            ▼
+                     admin: timeline + PROCTORING_REVIEW_SIGNAL (never scoring)
 ```
 
-```ts
-export interface ObjectStorage {
-  createUploadUrl(key: string, contentType: string, ttlSeconds: number): Promise<string>
-  createDownloadUrl(key: string, ttlSeconds: number): Promise<string>
-  getObjectMetadata(key: string): Promise<{ byteSize: number; contentType: string } | null>
-  deleteObject(key: string): Promise<void>
-}
-```
-
-**R2 gotcha:** AWS SDK JS v3 >= 3.729 defaults `requestChecksumCalculation` to
-`WHEN_SUPPORTED`, adding an `x-amz-checksum-crc32` header that breaks R2
-presigned PUTs. Construct the `S3Client` with
-`requestChecksumCalculation: 'WHEN_REQUIRED'`.
-
-**Never sign `ContentLength`** — it forces the browser to send exactly that byte
-count. Sign `Bucket`/`Key`/`ContentType` only and enforce size server-side with
-`HeadObject` on completion. That is what makes "do not trust frontend-reported
-size" true.
+Limitations (state them to anyone relying on this):
+- A phone held outside the camera's view cannot be detected. Downward attention is an observation, never proof of a phone.
+- Gaze is an estimate from head pose and iris offset against a baseline taken in the first few seconds.
+- Lighting, glasses, camera placement and a skewed baseline all degrade it.
+- A blur or a hidden tab means only that focus left the page.
+- The client is not trusted. A modified browser can fake heartbeats that report healthy devices, and it can read the detection thresholds from the JS bundle. What the server does guarantee: `/start` needs a live session; events and heartbeats bind to the caller's own session; heartbeat gaps are recorded server-side, including the trailing gap at submit; event volume is capped per session.
 
 ### Gaze: pure core, thin shell
 
@@ -237,7 +223,8 @@ proctoring benefit.
   unreliable through the pgBouncer pooler.
 - **No secrets in git.** `.env.example` gets commented placeholders in the
   existing heavily-annotated style.
-- **Object keys carry no PII** — internal ids only.
+- **No media capture, encoding, upload or storage anywhere.**
+  `tests/proctoring-no-media.test.ts` enforces it.
 - **`/start` refuses to start the clock** when proctoring is enabled and no
   `ACTIVE` session exists.
 - **Question correlation is client-supplied, membership-validated.**
@@ -269,11 +256,8 @@ proctoring benefit.
 
 ```prisma
 enum ProctoringSessionStatus { PENDING ACTIVE DEGRADED COMPLETED INTERRUPTED EXPIRED }
-enum ProctoringAssetType     { WEBCAM_SEGMENT SCREENSHOT }
-enum ProctoringAssetStatus   { PENDING UPLOADED FAILED EXPIRED DELETED }
 ```
 
-- `ProctoringAsset` idempotency key: `@@unique([proctoringSessionId, type, sequence])`
 - `ProctoringEvent` dedup key: `@@unique([proctoringSessionId, clientEventId])`
 
 Full definitions in `part-01-schema-and-config.md`.
