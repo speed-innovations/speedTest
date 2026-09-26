@@ -65,29 +65,7 @@ function namedError(name: string): Error {
   return err
 }
 
-const SESSION_CONFIG = {
-  screenshotIntervalMs: 60_000,
-  videoSegmentMs: 300_000,
-  videoBitsPerSecond: 160_000,
-  audioBitsPerSecond: 32_000,
-  maxScreenshotBytes: 250_000,
-  heartbeatIntervalMs: 20_000,
-  screenRequired: true,
-}
-
-/** MediaRecorder is stubbed: nothing here asserts on recorded output. */
-function installMediaRecorder(supported = true): void {
-  class FakeRecorder {
-    state = 'recording'
-    ondataavailable: unknown = null
-    onstop: unknown = null
-    onerror: unknown = null
-    start = vi.fn()
-    stop = vi.fn()
-    static isTypeSupported = (t: string) => supported && t.indexOf('webm') !== -1
-  }
-  ;(globalThis as { MediaRecorder?: unknown }).MediaRecorder = FakeRecorder
-}
+const SESSION_CONFIG = { heartbeatIntervalMs: 20_000, screenRequired: true }
 
 function installMediaDevices(h: Harness): void {
   Object.defineProperty(navigator, 'mediaDevices', {
@@ -133,13 +111,7 @@ beforeEach(() => {
     getDisplayMedia: vi.fn(() => Promise.resolve(stream(1, 0))),
   }
   installMediaDevices(harness)
-  installMediaRecorder(true)
 
-  // Canvas and video are not real in jsdom; the screen-capture suite covers
-  // encoding, so here they only need to not throw.
-  HTMLCanvasElement.prototype.getContext = vi.fn(() => ({ drawImage: vi.fn() })) as never
-  HTMLCanvasElement.prototype.toBlob = vi.fn((cb: (b: Blob | null) => void) =>
-    cb(new Blob(['x'], { type: 'image/webp' }))) as never
   Object.defineProperty(HTMLVideoElement.prototype, 'videoWidth', { configurable: true, get: () => 1280 })
   Object.defineProperty(HTMLVideoElement.prototype, 'videoHeight', { configurable: true, get: () => 720 })
   HTMLVideoElement.prototype.play = vi.fn(() => Promise.resolve())
@@ -148,7 +120,7 @@ beforeEach(() => {
     if (String(url).indexOf(SESSION_URL) === 0) {
       return Promise.resolve(new Response(
         JSON.stringify({
-          sessionId: 's1', status: 'ACTIVE', version: '1',
+          sessionId: 's1', status: 'ACTIVE', version: '1', resumed: false,
           retentionExpiresAt: new Date().toISOString(), config: SESSION_CONFIG,
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -194,7 +166,7 @@ describe('ProctoringSetup', () => {
     })
     expect(screen.getAllByText(/camera and microphone access was denied/i).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: /try again/i })).toBeTruthy()
-    // The regression that matters: a denial must not reserve storage.
+    // The regression that matters: a denial must not create a session.
     expect(sessionCalls()).toBe(0)
   })
 
@@ -215,7 +187,7 @@ describe('ProctoringSetup', () => {
   })
 
   it('refuses an unsupported browser and does not offer to start', () => {
-    installMediaRecorder(false)
+    installMediaDevices({ getUserMedia: harness.getUserMedia } as unknown as Harness)
 
     render(<Host />)
 
@@ -224,11 +196,11 @@ describe('ProctoringSetup', () => {
     expect(screen.getByTestId('state').textContent).toBe('UNSUPPORTED_BROWSER')
   })
 
-  it('shows the calm storage message on a 503 and no internal reason', async () => {
+  it('shows the calm unavailable message on a 503 and no internal reason', async () => {
     fetchMock = vi.fn((url: string) => {
       if (String(url).indexOf(SESSION_URL) === 0) {
         return Promise.resolve(new Response(
-          JSON.stringify({ error: 'PROCTORING_STORAGE_LIMIT_REACHED', code: 'PROCTORING_STORAGE_LIMIT_REACHED' }),
+          JSON.stringify({ error: 'PROCTORING_DISABLED', code: 'PROCTORING_DISABLED' }),
           { status: 503, headers: { 'Content-Type': 'application/json' } }
         ))
       }
@@ -240,11 +212,11 @@ describe('ProctoringSetup', () => {
     fireEvent.click(screen.getByRole('button', { name: /start proctored assessment/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('state').textContent).toBe('STORAGE_UNAVAILABLE')
+      expect(screen.getByTestId('state').textContent).toBe('PROCTORING_UNAVAILABLE')
     })
     expect(screen.getByText(/temporarily unavailable\. please try again later/i)).toBeTruthy()
     // The server's reason is an operational detail. A candidate seeing
-    // "STORAGE_LIMIT_REACHED" learns nothing and is alarmed by it.
-    expect(document.body.textContent).not.toContain('PROCTORING_STORAGE_LIMIT_REACHED')
+    // "PROCTORING_DISABLED" learns nothing and is alarmed by it.
+    expect(document.body.textContent).not.toContain('PROCTORING_DISABLED')
   })
 })

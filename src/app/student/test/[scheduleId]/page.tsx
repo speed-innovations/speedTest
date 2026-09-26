@@ -487,11 +487,7 @@ export default function TestPage() {
             </div>
           )}
           {proctoringEnabled && (
-            <ProctoringStatusIndicator
-              state={proctoring.state}
-              capture={proctoring.capture}
-              uploads={proctoring.uploads}
-            />
+            <ProctoringStatusIndicator variant="chip" state={proctoring.state} health={proctoring.health} />
           )}
           <div className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-mono font-bold ${timeLeft < 300 ? 'bg-red-500/30 text-red-200' : 'bg-white/10'}`}>
             <Clock size={16} /> {formatTime(timeLeft)}

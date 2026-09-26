@@ -1,74 +1,90 @@
 'use client'
-import { CloudOff, UploadCloud, MonitorUp, Video, CheckCircle2, WifiOff } from 'lucide-react'
-import type { CaptureState } from '@/lib/proctoring/client/use-proctoring'
+import { Camera, MonitorUp, ShieldAlert, ShieldCheck } from 'lucide-react'
+import type { ProctoringHealth } from '@/lib/proctoring/client/use-proctoring'
+import type { DeviceHealth } from '@/lib/proctoring/client/integrity-monitor'
 import type { ProctoringClientState } from '@/lib/proctoring/types'
 
 /**
- * The small proctoring chip in the exam top bar.
- *
- * It sits next to the existing violation chip and deliberately says as little
- * as possible - but what it says is true. "Evidence saved" appears only when
- * nothing is pending and nothing has failed; anything still queued reads as
- * pending, because telling a candidate their evidence is saved while it sits in
- * a retry loop is the one thing this component must never do.
+ * "Proctoring active" - and only when it is true. Everything shown is read
+ * from live device health. Nothing mentions recording or saving, because
+ * nothing is recorded or saved. Status is never colour-only: every row pairs
+ * a dot with a word.
  */
+
+const HIDDEN: ProctoringClientState[] = [
+  'IDLE', 'CHECKING_DEVICES', 'READY', 'AWAITING_PERMISSION', 'PERMISSION_DENIED',
+  'UNSUPPORTED_BROWSER', 'PROCTORING_UNAVAILABLE', 'COMPLETED',
+]
+
+const LABEL: Record<DeviceHealth, string> = {
+  ACTIVE: 'Active',
+  MUTED: 'Interrupted',
+  ENDED: 'Stopped',
+  UNAVAILABLE: 'Unavailable',
+}
+
+export function needsAttention(state: ProctoringClientState, h: ProctoringHealth): boolean {
+  return (
+    h.camera !== 'ACTIVE' || h.microphone !== 'ACTIVE' || h.screen !== 'ACTIVE' ||
+    h.connection === 'LOST' || state === 'SESSION_INTERRUPTED'
+  )
+}
+
+function Dot({ ok }: { ok: boolean }) {
+  return <span aria-hidden className={`inline-block w-2 h-2 rounded-full ${ok ? 'bg-green-500' : 'bg-amber-500'}`} />
+}
+
+function Row({ icon, name, health }: { icon: React.ReactNode; name: string; health: DeviceHealth }) {
+  const ok = health === 'ACTIVE'
+  return (
+    <div className="flex items-center justify-between gap-2 py-0.5">
+      <span className="flex items-center gap-1.5 text-gray-600">{icon}{name}</span>
+      <span className={`flex items-center gap-1.5 ${ok ? 'text-gray-700' : 'text-amber-700 font-medium'}`}>
+        <Dot ok={ok} /> {LABEL[health]}
+      </span>
+    </div>
+  )
+}
 
 export default function ProctoringStatusIndicator({
   state,
-  capture,
-  uploads,
+  health,
+  variant = 'chip',
 }: {
   state: ProctoringClientState
-  capture: CaptureState
-  uploads: { pending: number; failed: number; uploaded: number }
+  health: ProctoringHealth
+  variant?: 'chip' | 'panel'
 }) {
-  if (state === 'IDLE' || state === 'CHECKING_DEVICES' || state === 'READY') return null
+  if (HIDDEN.indexOf(state) !== -1) return null
+  const attention = needsAttention(state, health)
+  const headline = attention ? 'Proctoring: attention needed' : 'Proctoring active'
 
-  const offline = state === 'NETWORK_OFFLINE'
-
-  let uploadIcon = <CheckCircle2 size={12} />
-  let uploadText = 'Evidence saved'
-  if (uploads.failed > 0) {
-    uploadIcon = <CloudOff size={12} />
-    uploadText = 'Upload failed'
-  } else if (uploads.pending > 0) {
-    uploadIcon = <UploadCloud size={12} />
-    uploadText = `Saving ${uploads.pending}`
-  } else if (uploads.uploaded === 0) {
-    // Nothing has been uploaded yet, so there is nothing to call saved. The
-    // first segment only closes after a full segment interval.
-    uploadIcon = <UploadCloud size={12} />
-    uploadText = 'Recording'
+  if (variant === 'chip') {
+    return (
+      <span
+        aria-label="Proctoring status"
+        data-testid="proctoring-chip"
+        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs ${
+          attention ? 'bg-amber-500/25 text-amber-100' : 'bg-white/10 text-white/90'
+        }`}
+      >
+        <Dot ok={!attention} /> {headline}
+      </span>
+    )
   }
 
   return (
-    <div className="flex items-center gap-2 text-xs" aria-label="Proctoring status">
-      <span
-        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg ${
-          capture.recording ? 'bg-red-500/20 text-red-100' : 'bg-white/10 text-white/60'
-        }`}
-      >
-        <Video size={12} />
-        {capture.recording ? 'Recording' : 'Not recording'}
-      </span>
-
-      <span
-        className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg ${
-          capture.screenSharing ? 'bg-white/10 text-white/80' : 'bg-amber-500/25 text-amber-100'
-        }`}
-      >
-        <MonitorUp size={12} />
-        {capture.screenSharing ? 'Screen sharing' : 'Screen share stopped'}
-      </span>
-
-      <span
-        className={`hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg ${
-          uploads.failed > 0 || offline ? 'bg-amber-500/25 text-amber-100' : 'bg-white/10 text-white/70'
-        }`}
-      >
-        {offline ? <WifiOff size={12} /> : uploadIcon}
-        {offline ? 'Offline' : uploadText}
-      </span>
+    <div
+      aria-label="Proctoring status"
+      data-testid="proctoring-panel"
+      className="rounded-lg bg-white border border-gray-200 shadow-lg px-3 py-2 text-xs w-full"
+    >
+      <p className="flex items-center gap-1.5 font-semibold text-gray-800 uppercase tracking-wide mb-1.5">
+        {attention ? <ShieldAlert size={13} className="text-amber-600" /> : <ShieldCheck size={13} className="text-green-600" />}
+        {headline}
+      </p>
+      <Row icon={<Camera size={12} />} name="Camera" health={health.camera} />
+      <Row icon={<MonitorUp size={12} />} name="Screen Share" health={health.screen} />
     </div>
   )
 }

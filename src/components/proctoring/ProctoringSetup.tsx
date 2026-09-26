@@ -114,7 +114,7 @@ export default function ProctoringSetup({
   }
 
   const denied = state === 'PERMISSION_DENIED'
-  const storageUnavailable = state === 'STORAGE_UNAVAILABLE'
+  const unavailable = state === 'PROCTORING_UNAVAILABLE'
 
   return (
     <div className="space-y-4">
@@ -150,7 +150,7 @@ export default function ProctoringSetup({
         crash. It gets the calm sentence and no internal reason - the candidate
         can do nothing about a bucket being full, and a code would only alarm.
       */}
-      {storageUnavailable && (
+      {unavailable && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
           <p className="text-sm text-amber-800 flex items-start gap-2">
             <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
@@ -172,7 +172,7 @@ export default function ProctoringSetup({
         </div>
       )}
 
-      {startError && !storageUnavailable && !denied && (
+      {startError && !unavailable && !denied && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <p className="text-sm text-red-700 leading-relaxed">{startError.message}</p>
         </div>

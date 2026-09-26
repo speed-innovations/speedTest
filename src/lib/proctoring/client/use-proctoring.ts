@@ -1,27 +1,31 @@
 'use client'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AttemptKind, ProctoringClientState } from '../types'
+import { severityFor, type ClientEventType } from '../event-types'
 import { checkBrowserSupport, type SupportReport } from './media-support'
 import { nextState, type ProctoringEventName } from './state-machine'
-import { proctoringApi, type AttemptRef, type SessionConfig } from './proctoring-api'
-import { UploadQueue, type QueueItem, type QueueSummary } from './upload-queue'
-import { WebcamRecorder } from './webcam-recorder'
-import { ScreenCapture } from './screen-capture'
+import { proctoringApi, type AttemptRef, type GazeMonitorHealth } from './proctoring-api'
 import { GazeMonitor } from './gaze-monitor'
-import type { PipelineOutput } from './detection-pipeline'
-import { WARNING_COPY as DETECTION_WARNING_COPY } from './warning-copy'
+import type { DetectionEvent, PipelineOutput } from './detection-pipeline'
+import { IntegrityMonitor, type DeviceHealth, type DeviceKind, type IntegrityEvent } from './integrity-monitor'
+import { EventQueue, type WireEvent } from './event-queue'
+import { INTEGRITY_COPY, WARNING_COPY, WarningGate, type WarningKind } from './warning-copy'
+import { DIAGNOSTICS_ENABLED, toDiagnosticsSnapshot, type DiagnosticsSnapshot } from './diagnostics'
 
 /**
- * The single integration point between the proctoring services and React.
+ * The single integration point between live proctoring and React, called
+ * from both candidate pages. Every decision - what starts monitoring, what
+ * tears it down, when recovery is needed - lives here, never in a page.
  *
- * Written once and called from both test pages. The two candidate pages are
- * near-identical 523-line components and this repo's standing failure mode is a
- * fix applied to one and not the other, so every decision here - what starts
- * capture, what tears it down, when recovery is required - lives in this file
- * and neither page re-implements any of it.
+ * Metadata only. The camera and microphone stream feeds an off-DOM video
+ * element that MediaPipe reads in this tab. The screen stream is held only so
+ * its end can be detected. No frame, sample or snapshot is ever encoded,
+ * stored or sent: the only network traffic is session, heartbeat and event
+ * JSON.
  *
- * Long-lived handles are kept in refs, never state. A webcam segment finishing
- * its upload must not re-render the question the candidate is reading.
+ * Long-lived handles live in refs, and every callback that fires from a
+ * timer, a track or MediaPipe reads refs rather than render-time values, so
+ * there are no stale closures and no capture restarts on re-render.
  */
 
 export type DeviceState = 'IDLE' | 'CHECKING' | 'READY' | 'DENIED' | 'FAILED' | 'NOT_REQUIRED'
@@ -43,8 +47,17 @@ export interface UseProctoringOptions {
   alreadyStarted: boolean
 }
 
+export type GazeHealth = 'IDLE' | 'LOADING' | 'CALIBRATING' | 'RUNNING' | 'UNAVAILABLE'
+
+export interface ProctoringHealth {
+  camera: DeviceHealth
+  microphone: DeviceHealth
+  screen: DeviceHealth
+  gaze: GazeHealth
+  connection: 'OK' | 'LOST'
+}
+
 export interface CaptureState {
-  recording: boolean
   screenSharing: boolean
   cameraLive: boolean
   micLive: boolean
@@ -54,50 +67,39 @@ export interface UseProctoringResult {
   state: ProctoringClientState
   support: SupportReport
   devices: { camera: DeviceStatus; microphone: DeviceStatus; screen: DeviceStatus }
-  warning: { message: string; kind: string } | null
-  uploads: { pending: number; failed: number; uploaded: number }
-  /** What is actually live right now. Drives the status indicator honestly. */
+  warning: { message: string; kind: WarningKind } | null
+  /** What is actually true right now. The UI reads this, never the state name. */
+  health: ProctoringHealth
   capture: CaptureState
-  /** The last session-start failure, already safe to display. */
   startError: { message: string; code?: string } | null
-  /** True when the exam must not be shown: recovery is required. */
   needsRecovery: boolean
+  /** Dev-only; always null in production builds. */
+  diagnostics: DiagnosticsSnapshot | null
   requestPermissionsAndStart: () => Promise<boolean>
   resumeScreenShare: () => Promise<boolean>
+  resumeCamera: () => Promise<boolean>
+  resumeSession: () => Promise<boolean>
   finalize: () => Promise<void>
   videoRef: React.RefObject<HTMLVideoElement>
 }
 
-/** Queue bound. A segment is several megabytes, so this is a memory ceiling. */
-const MAX_QUEUED_UPLOADS = 16
-const UPLOAD_MAX_RETRIES = 3
-const UPLOAD_BASE_DELAY_MS = 1000
-/** Events are batched rather than sent per warning. */
 const EVENT_FLUSH_INTERVAL_MS = 5000
-const EVENT_BATCH_MAX = 50
-/** How long a warning banner stays on screen. */
 const WARNING_VISIBLE_MS = 4000
+/** Monitoring must never cost a candidate their answers: the final flush is abandoned after this. */
+const FINALIZE_FLUSH_TIMEOUT_MS = 5000
+const HEARTBEAT_FAILURES_BEFORE_LOST = 2
+const DIAGNOSTICS_MIN_INTERVAL_MS = 250
+const MAX_EVENT_DURATION_MS = 14_400_000
 /**
- * Longest wait for in-flight uploads at submit time. Evidence must never cost a
- * candidate their answers, so the drain is raced against this and abandoned.
+ * Consecutive inference failures before gaze analysis is declared
+ * unavailable. One bad frame is noise; a model that throws on every frame
+ * must not sit at LOADING forever while the server hears STARTING.
  */
-const FINALIZE_DRAIN_TIMEOUT_MS = 8000
+const GAZE_ERROR_LIMIT = 10
 
-const WARNING_COPY: Record<string, string> = {
-  ...DETECTION_WARNING_COPY,
-  UPLOAD_FAILURE:
-    "We're having trouble saving assessment evidence. Please check your internet connection.",
-}
-
-interface PendingEvent {
-  clientEventId: string
-  type: string
-  direction?: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN'
-  occurredAt: string
-  elapsedMs?: number
-  durationMs?: number
-  severity: 'INFO' | 'WARN'
-  questionId?: string
+const IDLE_DEVICE: DeviceStatus = { state: 'IDLE' }
+const INITIAL_HEALTH: ProctoringHealth = {
+  camera: 'UNAVAILABLE', microphone: 'UNAVAILABLE', screen: 'UNAVAILABLE', gaze: 'IDLE', connection: 'OK',
 }
 
 function newEventId(): string {
@@ -112,7 +114,54 @@ function newEventId(): string {
   return `e${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`
 }
 
-const IDLE_DEVICE: DeviceStatus = { state: 'IDLE' }
+/** A performance.now() instant as a wall-clock ISO string. */
+function wallClock(perfMs: number): string {
+  return new Date(Date.now() - (performance.now() - perfMs)).toISOString()
+}
+
+function stopStream(stream: MediaStream | null): void {
+  stream?.getTracks().forEach(track => {
+    try {
+      track.stop()
+    } catch {
+      // An already-ended track throws on some engines.
+    }
+  })
+}
+
+function displaySurfaceOf(stream: MediaStream): string {
+  const track = stream.getVideoTracks()[0]
+  if (!track || typeof track.getSettings !== 'function') return 'unknown'
+  const surface = (track.getSettings() as { displaySurface?: unknown }).displaySurface
+  return typeof surface === 'string' ? surface : 'unknown'
+}
+
+function gazeForServer(g: GazeHealth): GazeMonitorHealth {
+  switch (g) {
+    case 'LOADING': return 'STARTING'
+    case 'CALIBRATING': return 'CALIBRATING'
+    case 'RUNNING': return 'RUNNING'
+    case 'UNAVAILABLE': return 'UNAVAILABLE'
+    default: return 'STOPPED'
+  }
+}
+
+function captureFrom(h: ProctoringHealth): CaptureState {
+  return {
+    cameraLive: h.camera === 'ACTIVE' || h.camera === 'MUTED',
+    micLive: h.microphone === 'ACTIVE' || h.microphone === 'MUTED',
+    screenSharing: h.screen === 'ACTIVE',
+  }
+}
+
+/** Race a promise against a timer, and clear the timer either way. */
+function withTimeout(p: Promise<void>, ms: number): Promise<void> {
+  return new Promise(resolve => {
+    const timer = setTimeout(resolve, ms)
+    const done = () => { clearTimeout(timer); resolve() }
+    p.then(done, done)
+  })
+}
 
 export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
   const { enabled, attemptId, kind, parentId, currentQuestionId, alreadyStarted } = opts
@@ -122,58 +171,42 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
   const [camera, setCamera] = useState<DeviceStatus>(IDLE_DEVICE)
   const [microphone, setMicrophone] = useState<DeviceStatus>(IDLE_DEVICE)
   const [screen, setScreen] = useState<DeviceStatus>(IDLE_DEVICE)
-  const [warning, setWarning] = useState<{ message: string; kind: string } | null>(null)
-  const [uploads, setUploads] = useState({ pending: 0, failed: 0, uploaded: 0 })
-  const [capture, setCapture] = useState<CaptureState>({
-    recording: false,
-    screenSharing: false,
-    cameraLive: false,
-    micLive: false,
-  })
+  const [warning, setWarning] = useState<{ message: string; kind: WarningKind } | null>(null)
+  const [health, setHealth] = useState<ProctoringHealth>(INITIAL_HEALTH)
   const [startError, setStartError] = useState<{ message: string; code?: string } | null>(null)
-  /**
-   * Whether this page instance has brought capture up at all.
-   *
-   * The part file expressed the recovery condition as `state !== 'ACTIVE'`,
-   * which is correct at the moment of load and wrong immediately afterwards: a
-   * candidate who stops screen sharing mid-exam leaves ACTIVE, and that must
-   * show a resume prompt inside the exam, not replace the exam with the
-   * recovery screen and hide their questions. What recovery actually asks is
-   * "has proctoring ever started in this page instance?".
-   */
+  /** Whether this page instance brought monitoring up. Recovery keys on it. */
   const [captureLive, setCaptureLive] = useState(false)
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsSnapshot | null>(null)
 
+  const stateRef = useRef<ProctoringClientState>('IDLE')
+  const healthRef = useRef<ProctoringHealth>(INITIAL_HEALTH)
   const cameraStreamRef = useRef<MediaStream | null>(null)
   const screenStreamRef = useRef<MediaStream | null>(null)
-  const recorderRef = useRef<WebcamRecorder | null>(null)
-  const screenCaptureRef = useRef<ScreenCapture | null>(null)
   const gazeRef = useRef<GazeMonitor | null>(null)
-  const queueRef = useRef<UploadQueue | null>(null)
-  const configRef = useRef<SessionConfig | null>(null)
+  /** Bumped on every start/stop, so a model that finishes loading late is discarded. */
+  const gazeGenerationRef = useRef(0)
+  /** Consecutive onError calls since the last good output. */
+  const gazeErrorCountRef = useRef(0)
+  /** The generation already reported UNAVAILABLE, so it is enqueued once per monitor. */
+  const gazeUnavailableGenerationRef = useRef(-1)
+  const integrityRef = useRef<IntegrityMonitor | null>(null)
+  const queueRef = useRef<EventQueue | null>(null)
+  const gateRef = useRef(new WarningGate())
+  const sessionIdRef = useRef<string | null>(null)
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const eventTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingEventsRef = useRef<PendingEvent[]>([])
+  const heartbeatFailuresRef = useRef(0)
+  const lastDiagnosticsAtRef = useRef(0)
   const startedAtRef = useRef(0)
   const startingRef = useRef(false)
   const finalizedRef = useRef(false)
-  const captureStateRef = useRef<CaptureState>({
-    recording: false,
-    screenSharing: false,
-    cameraLive: false,
-    micLive: false,
-  })
-  const uploadDegradedRef = useRef(false)
-  /** The gaze monitor's own video element, deliberately off-DOM. */
+  /** The monitor's own video element, deliberately off-DOM. */
   const inferenceVideoRef = useRef<HTMLVideoElement | null>(null)
-  /** The optional visible self-view. Never what inference reads from. */
+  /** The visible self-view. Never what inference reads from. */
   const videoRef = useRef<HTMLVideoElement>(null)
   const teardownRef = useRef<(() => void) | null>(null)
   const questionIdRef = useRef<string | null>(currentQuestionId)
-
-  // Callbacks fired from timers and media events read the question id from a
-  // ref: re-creating the recorder or the gaze monitor every time the candidate
-  // pages to the next question would restart capture on every click.
   questionIdRef.current = currentQuestionId
 
   const attemptRef = useMemo<AttemptRef | null>(
@@ -183,69 +216,179 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
   const attemptRefRef = useRef<AttemptRef | null>(attemptRef)
   attemptRefRef.current = attemptRef
 
+  /** Against the ref, so the ref and the rendered state never disagree. */
   const dispatch = useCallback((event: ProctoringEventName) => {
-    setState(prev => nextState(prev, event))
+    const next = nextState(stateRef.current, event)
+    stateRef.current = next
+    setState(next)
   }, [])
 
-  const patchCapture = useCallback((patch: Partial<CaptureState>) => {
-    const merged = { ...captureStateRef.current, ...patch }
-    captureStateRef.current = merged
-    setCapture(merged)
+  const patchHealth = useCallback((patch: Partial<ProctoringHealth>) => {
+    const merged = { ...healthRef.current, ...patch }
+    healthRef.current = merged
+    setHealth(merged)
   }, [])
 
-  const elapsed = useCallback(() => {
-    if (!startedAtRef.current) return 0
-    return Math.max(0, Math.round(performance.now() - startedAtRef.current))
+  const enqueue = useCallback((
+    type: ClientEventType,
+    extra: {
+      startedAtPerf?: number
+      endedAtPerf?: number
+      durationMs?: number
+      confidence?: number
+      direction?: WireEvent['direction']
+      metadata?: WireEvent['metadata']
+    } = {}
+  ) => {
+    const queue = queueRef.current
+    if (!queue) return
+    const startPerf = extra.startedAtPerf ?? performance.now()
+    const questionId = questionIdRef.current
+    queue.push({
+      clientEventId: newEventId(),
+      type,
+      startedAt: wallClock(startPerf),
+      endedAt: extra.endedAtPerf !== undefined ? wallClock(extra.endedAtPerf) : undefined,
+      durationMs: extra.durationMs !== undefined
+        ? Math.min(MAX_EVENT_DURATION_MS, Math.max(0, Math.round(extra.durationMs)))
+        : undefined,
+      confidence: extra.confidence,
+      direction: extra.direction,
+      severity: severityFor(type),
+      elapsedMs: startedAtRef.current ? Math.max(0, Math.round(startPerf - startedAtRef.current)) : undefined,
+      questionId: questionId ?? undefined,
+      metadata: extra.metadata,
+    })
   }, [])
 
-  const queueEvent = useCallback(
-    (
-      type: string,
-      extra?: {
-        direction?: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN'
-        durationMs?: number
-        severity?: 'INFO' | 'WARN'
-      }
-    ) => {
-      const questionId = questionIdRef.current
-      pendingEventsRef.current.push({
-        clientEventId: newEventId(),
-        type,
-        direction: extra?.direction,
-        occurredAt: new Date().toISOString(),
-        elapsedMs: elapsed(),
-        durationMs: extra?.durationMs,
-        severity: extra?.severity ?? 'INFO',
-        questionId: questionId ?? undefined,
-      })
-    },
-    [elapsed]
-  )
-
-  const flushEvents = useCallback(async () => {
-    const ref = attemptRefRef.current
-    if (!ref) return
-    while (pendingEventsRef.current.length > 0) {
-      const batch = pendingEventsRef.current.slice(0, EVENT_BATCH_MAX)
-      // Remove before sending. A failed batch is dropped rather than retried
-      // forever: events are corroborating evidence, and an unbounded retry
-      // buffer on a failing network is a worse failure than a missing warning.
-      pendingEventsRef.current = pendingEventsRef.current.slice(batch.length)
-      const res = await proctoringApi.sendEvents(ref, batch)
-      if (!res.ok) return
-    }
-  }, [])
-
-  const showWarning = useCallback((kind: string) => {
-    const message = WARNING_COPY[kind]
-    if (!message) return
-    setWarning({ message, kind })
+  const showWarning = useCallback((kind: WarningKind) => {
+    if (!gateRef.current.allow(kind, performance.now())) return
+    setWarning({ message: WARNING_COPY[kind], kind })
     if (warningTimerRef.current !== null) clearTimeout(warningTimerRef.current)
-    warningTimerRef.current = setTimeout(() => setWarning(null), WARNING_VISIBLE_MS)
+    warningTimerRef.current = setTimeout(() => {
+      warningTimerRef.current = null
+      setWarning(null)
+    }, WARNING_VISIBLE_MS)
   }, [])
 
-  /** Stop everything. Safe to call more than once, and from an unmount. */
-  const teardown = useCallback(() => {
+  const handleDetectionEvent = useCallback((e: DetectionEvent) => {
+    enqueue(e.type, {
+      startedAtPerf: e.startedAtMs,
+      endedAtPerf: e.endedAtMs,
+      durationMs: e.durationMs,
+      confidence: e.confidence,
+      direction: e.direction,
+      metadata: e.metadata,
+    })
+  }, [enqueue])
+
+  const handleOutput = useCallback((out: PipelineOutput) => {
+    gazeErrorCountRef.current = 0
+    out.events.forEach(handleDetectionEvent)
+    out.warnings.forEach(showWarning)
+    const g: GazeHealth = out.phase === 'CALIBRATING' ? 'CALIBRATING' : 'RUNNING'
+    if (healthRef.current.gaze !== g) patchHealth({ gaze: g })
+    if (DIAGNOSTICS_ENABLED) {
+      const now = performance.now()
+      if (now - lastDiagnosticsAtRef.current >= DIAGNOSTICS_MIN_INTERVAL_MS) {
+        lastDiagnosticsAtRef.current = now
+        setDiagnostics(toDiagnosticsSnapshot(out))
+      }
+    }
+  }, [handleDetectionEvent, patchHealth, showWarning])
+
+  /** Stop inference. `flush` keeps the episode in progress (finalize, camera loss). */
+  const stopGaze = useCallback((flush: boolean) => {
+    gazeGenerationRef.current++
+    const monitor = gazeRef.current
+    gazeRef.current = null
+    if (!monitor) return
+    if (flush) {
+      try {
+        monitor.flush().forEach(handleDetectionEvent)
+      } catch {
+        // Nothing in progress to keep.
+      }
+    }
+    try {
+      monitor.stop()
+    } catch {
+      // A monitor that never finished loading has nothing to stop.
+    }
+  }, [handleDetectionEvent])
+
+  const startGaze = useCallback(async (stream: MediaStream) => {
+    stopGaze(false)
+    const generation = ++gazeGenerationRef.current
+    gazeErrorCountRef.current = 0
+    patchHealth({ gaze: 'LOADING' })
+    /** Health always follows; the event is enqueued once per monitor instance. */
+    const reportUnavailable = () => {
+      if (healthRef.current.gaze !== 'UNAVAILABLE') patchHealth({ gaze: 'UNAVAILABLE' })
+      if (gazeUnavailableGenerationRef.current === generation) return
+      gazeUnavailableGenerationRef.current = generation
+      enqueue('GAZE_MONITOR_UNAVAILABLE')
+    }
+    const handleError = () => {
+      if (generation !== gazeGenerationRef.current) return
+      gazeErrorCountRef.current++
+      if (gazeErrorCountRef.current >= GAZE_ERROR_LIMIT) reportUnavailable()
+    }
+    try {
+      let inference = inferenceVideoRef.current
+      if (!inference) {
+        inference = document.createElement('video')
+        inference.muted = true
+        inference.playsInline = true
+        inferenceVideoRef.current = inference
+      }
+      inference.srcObject = stream
+      await inference.play().catch(() => undefined)
+      const monitor = await GazeMonitor.create({ onOutput: handleOutput, onError: handleError })
+      // Superseded while the model loaded (camera reconnected, or torn down):
+      // discard, so there is never more than one MediaPipe instance.
+      if (generation !== gazeGenerationRef.current) {
+        monitor.stop()
+        return
+      }
+      gazeRef.current = monitor
+      monitor.start(inference)
+    } catch {
+      if (generation !== gazeGenerationRef.current) return
+      // Gaze analysis is the one part that may be absent. It is reported,
+      // never hidden: the heartbeat says UNAVAILABLE and a reviewer sees it.
+      reportUnavailable()
+    }
+  }, [enqueue, handleOutput, patchHealth, stopGaze])
+
+  const handleIntegrityEvent = useCallback((e: IntegrityEvent) => {
+    enqueue(e.type, { startedAtPerf: e.atMs, durationMs: e.durationMs, metadata: e.metadata })
+  }, [enqueue])
+
+  const handleHealthChange = useCallback((next: Record<DeviceKind, DeviceHealth>) => {
+    const prev = healthRef.current
+    patchHealth({ camera: next.camera, microphone: next.microphone, screen: next.screen })
+    if (finalizedRef.current) return
+    if (next.camera === 'ENDED' && prev.camera !== 'ENDED') {
+      setCamera({ state: 'FAILED', message: INTEGRITY_COPY.CAMERA_INTERRUPTED })
+      dispatch('CAMERA_ENDED')
+      // A frozen last frame would keep reading as "face present". Stop
+      // inference rather than trust it.
+      stopGaze(true)
+      patchHealth({ gaze: 'IDLE' })
+    }
+    if (next.microphone === 'ENDED' && prev.microphone !== 'ENDED') {
+      setMicrophone({ state: 'FAILED', message: INTEGRITY_COPY.MICROPHONE_INTERRUPTED })
+      dispatch('MICROPHONE_ENDED')
+    }
+    if (next.screen === 'ENDED' && prev.screen !== 'ENDED') {
+      setScreen({ state: 'DENIED', message: INTEGRITY_COPY.SCREEN_SHARE_STOPPED })
+      dispatch('SCREEN_SHARE_ENDED')
+    }
+    if (next.screen === 'ACTIVE' && prev.screen === 'ENDED') setScreen({ state: 'READY' })
+  }, [dispatch, patchHealth, stopGaze])
+
+  const clearTimers = useCallback(() => {
     if (heartbeatTimerRef.current !== null) {
       clearInterval(heartbeatTimerRef.current)
       heartbeatTimerRef.current = null
@@ -254,78 +397,52 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
       clearInterval(eventTimerRef.current)
       eventTimerRef.current = null
     }
+  }, [])
+
+  /** Stop everything. Safe to call more than once, and from an unmount. */
+  const teardown = useCallback(() => {
+    clearTimers()
     if (warningTimerRef.current !== null) {
       clearTimeout(warningTimerRef.current)
       warningTimerRef.current = null
     }
-
-    try {
-      gazeRef.current?.stop()
-    } catch {
-      // A monitor that never finished loading has nothing to stop.
-    }
-    gazeRef.current = null
-
-    try {
-      screenCaptureRef.current?.stop()
-    } catch {
-      // Already stopped.
-    }
-    screenCaptureRef.current = null
-
-    // The recorder's own stop() is awaited in finalize(). Here the streams are
-    // cut regardless, because an unmount cannot wait for a flush and a camera
-    // that stays live after the candidate navigates away is the single most
-    // visible way to lose their trust.
-    recorderRef.current = null
-
-    const streams = [cameraStreamRef.current, screenStreamRef.current]
-    streams.forEach(stream => {
-      stream?.getTracks().forEach(track => {
-        try {
-          track.stop()
-        } catch {
-          // A track already ended by the browser throws on some engines.
-        }
-      })
-    })
+    stopGaze(false)
+    integrityRef.current?.detach()
+    integrityRef.current = null
+    queueRef.current?.close()
+    queueRef.current = null
+    // A camera left live after the candidate leaves is the most visible way
+    // to lose their trust.
+    stopStream(cameraStreamRef.current)
+    stopStream(screenStreamRef.current)
     cameraStreamRef.current = null
     screenStreamRef.current = null
-
     const preview = videoRef.current
     if (preview) preview.srcObject = null
     const inference = inferenceVideoRef.current
     if (inference) inference.srcObject = null
     inferenceVideoRef.current = null
-
-    captureStateRef.current = {
-      recording: false,
-      screenSharing: false,
-      cameraLive: false,
-      micLive: false,
-    }
-    setCapture(captureStateRef.current)
-  }, [])
+    sessionIdRef.current = null
+    gateRef.current.reset()
+    heartbeatFailuresRef.current = 0
+    healthRef.current = INITIAL_HEALTH
+    setHealth(INITIAL_HEALTH)
+    setWarning(null)
+    setDiagnostics(null)
+  }, [clearTimers, stopGaze])
 
   teardownRef.current = teardown
 
   useEffect(() => {
-    // Teardown runs on unmount and on navigation away, not only on submit. A
-    // camera that stays live after the candidate leaves is both a privacy
-    // failure and the thing that most visibly erodes trust in the product.
     return () => {
       teardownRef.current?.()
     }
   }, [])
 
   /**
-   * Keep the visible self-view bound to the camera stream.
-   *
-   * Deliberately has no dependency array, so it runs after every render. The
-   * page unmounts the pre-check's preview and mounts a different element in the
-   * exam UI, and that swap is not a state change this hook can observe - a
-   * one-shot attach at start time leaves the exam's preview permanently blank.
-   * The identity check makes the repeated run free.
+   * Keep the visible self-view bound to the camera stream. No dependency
+   * array on purpose: the page swaps the preview element between pre-check
+   * and exam, and a one-shot attach leaves the exam's preview blank.
    */
   useEffect(() => {
     const el = videoRef.current
@@ -338,146 +455,101 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
     }
   })
 
-  // Capability check. No permission prompt and no network call - it only reads
-  // what the browser exposes, so it is safe to run before any gesture.
+  // Capability check only - no prompt, no network - so it is safe before a gesture.
   useEffect(() => {
     if (!enabled) return
     const report = checkBrowserSupport()
     setSupport(report)
     if (!report.supported) {
-      setState(prev => nextState(prev, 'UNSUPPORTED'))
+      dispatch('UNSUPPORTED')
       setCamera({ state: 'FAILED', message: 'This browser cannot be used for a proctored assessment.' })
       setMicrophone({ state: 'FAILED' })
       setScreen({ state: 'FAILED' })
       return
     }
-    setState(prev => nextState(nextState(prev, 'CHECK_DEVICES'), 'DEVICES_OK'))
-  }, [enabled])
+    dispatch('CHECK_DEVICES')
+    dispatch('DEVICES_OK')
+  }, [enabled, dispatch])
+
+  const sendBatch = useCallback(async (batch: WireEvent[], o: { keepalive: boolean }): Promise<boolean> => {
+    const ref = attemptRefRef.current
+    const sessionId = sessionIdRef.current
+    if (!ref || !sessionId) return false
+    const res = await proctoringApi.sendEvents(ref, sessionId, batch, o)
+    if (res.ok) return true
+    // A 4xx other than 429 is a permanent refusal. Resending it would loop,
+    // so the batch is let go.
+    return res.status >= 400 && res.status < 500 && res.status !== 429
+  }, [])
 
   const sendHeartbeat = useCallback(async () => {
     const ref = attemptRefRef.current
-    if (!ref) return
-    const c = captureStateRef.current
-    const summary = queueRef.current?.summary()
+    const sessionId = sessionIdRef.current
+    if (!ref || !sessionId || finalizedRef.current) return
+    const h = healthRef.current
     const res = await proctoringApi.heartbeat(ref, {
-      recording: c.recording,
-      screenSharing: c.screenSharing,
-      cameraLive: c.cameraLive,
-      micLive: c.micLive,
-      pendingUploads: summary ? summary.pending + summary.uploading : 0,
+      sessionId,
+      clientState: stateRef.current,
+      camera: h.camera,
+      microphone: h.microphone,
+      screen: h.screen,
+      gazeMonitor: gazeForServer(h.gaze),
+      clientTimestamp: new Date().toISOString(),
+      droppedEvents: queueRef.current ? queueRef.current.dropped : 0,
     })
-    if (!res.ok && res.status === 0) dispatch('OFFLINE')
-  }, [dispatch])
+    if (finalizedRef.current) return
+    if (!res.ok) {
+      if (res.status === 404 || res.status === 409) {
+        dispatch('SESSION_LOST')
+        return
+      }
+      heartbeatFailuresRef.current++
+      if (heartbeatFailuresRef.current >= HEARTBEAT_FAILURES_BEFORE_LOST && healthRef.current.connection !== 'LOST') {
+        patchHealth({ connection: 'LOST' })
+        dispatch('OFFLINE')
+      }
+      return
+    }
+    heartbeatFailuresRef.current = 0
+    if (healthRef.current.connection === 'LOST') {
+      patchHealth({ connection: 'OK' })
+      dispatch('ONLINE')
+    }
+    if (res.data.session === null) dispatch('SESSION_LOST')
+  }, [dispatch, patchHealth])
 
-  /** One queue item: sign, PUT, then confirm. A throw makes the queue retry. */
-  const uploadItem = useCallback(async (item: QueueItem) => {
-    const ref = attemptRefRef.current
-    if (!ref) throw new Error('No attempt reference')
+  const startTimers = useCallback((heartbeatIntervalMs: number) => {
+    clearTimers()
+    heartbeatTimerRef.current = setInterval(() => { void sendHeartbeat() }, heartbeatIntervalMs)
+    eventTimerRef.current = setInterval(() => { void queueRef.current?.flush() }, EVENT_FLUSH_INTERVAL_MS)
+  }, [clearTimers, sendHeartbeat])
 
-    // The blob's own type, not a derived guess: the recorder and canvas.toBlob
-    // both stamp it, and the server signs the URL for exactly this value.
-    const contentType =
-      item.blob.type || (item.kind === 'WEBCAM_SEGMENT' ? 'video/webm' : 'image/webp')
-
-    const signed = await proctoringApi.requestUploadUrl(ref, {
-      type: item.kind,
-      sequence: item.sequence,
-      contentType,
-      capturedAt: item.capturedAt.toISOString(),
-      elapsedMs: item.elapsedMs,
-      questionId: item.questionId ?? undefined,
-    })
-    if (!signed.ok) throw new Error(signed.error)
-
-    const put = await proctoringApi.putObject(signed.data.uploadUrl, item.blob, contentType)
-    if (!put.ok) throw new Error(put.error)
-
-    const done = await proctoringApi.completeAsset(ref, signed.data.assetId)
-    if (!done.ok) throw new Error(done.error)
+  const watchCameraTracks = useCallback((integrity: IntegrityMonitor, stream: MediaStream) => {
+    integrity.watchTrack('camera', stream.getVideoTracks()[0])
+    integrity.watchTrack('microphone', stream.getAudioTracks()[0])
   }, [])
 
-  const onQueueChange = useCallback((summary: QueueSummary) => {
-    setUploads({ pending: summary.pending + summary.uploading, failed: summary.failed, uploaded: summary.uploaded })
-    if (summary.failed > 0 && !uploadDegradedRef.current) {
-      uploadDegradedRef.current = true
-      setState(prev => nextState(prev, 'UPLOADS_BACKLOGGED'))
-      showWarning('UPLOAD_FAILURE')
-      queueEvent('UPLOAD_FAILURE', { severity: 'WARN' })
-    } else if (summary.failed === 0 && uploadDegradedRef.current) {
-      uploadDegradedRef.current = false
-      setState(prev => nextState(prev, 'UPLOADS_RECOVERED'))
-      queueEvent('UPLOAD_RECOVERED')
-    }
-  }, [queueEvent, showWarning])
-
-  /**
-   * Acquire the display stream. Separated because recovery and a mid-exam
-   * resume both need it from their own user gesture.
-   */
   const acquireScreen = useCallback(async (): Promise<MediaStream | null> => {
     setScreen({ state: 'CHECKING' })
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        // Audio is deliberately not requested: the screen is sampled as stills
-        // and system audio would be captured without being needed.
-        audio: false,
-      })
+      // No audio: nothing of the screen is captured, only whether it is shared.
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
       setScreen({ state: 'READY' })
       return stream
     } catch (err) {
       const name = (err as { name?: string }).name
       setScreen({
         state: name === 'NotAllowedError' ? 'DENIED' : 'FAILED',
-        message:
-          name === 'NotAllowedError'
-            ? 'Screen sharing was not allowed. A proctored assessment cannot begin without it.'
-            : 'Screen sharing could not be started. Please try again.',
+        message: name === 'NotAllowedError'
+          ? 'Screen sharing was not allowed. A proctored assessment cannot begin without it.'
+          : 'Screen sharing could not be started. Please try again.',
       })
       return null
     }
   }, [])
 
-  const startScreenCapture = useCallback(
-    async (stream: MediaStream, cfg: SessionConfig) => {
-      const sc = new ScreenCapture({
-        stream,
-        maxBytes: cfg.maxScreenshotBytes,
-        onSnapshot: snapshot => {
-          queueRef.current?.enqueue({
-            id: `screenshot-${snapshot.sequence}`,
-            kind: 'SCREENSHOT',
-            sequence: snapshot.sequence,
-            blob: snapshot.blob,
-            capturedAt: snapshot.capturedAt,
-            elapsedMs: snapshot.elapsedMs,
-            questionId: questionIdRef.current,
-          })
-        },
-        onEnded: () => {
-          patchCapture({ screenSharing: false })
-          setScreen({
-            state: 'DENIED',
-            message: 'Screen sharing has stopped. Please resume it to continue being proctored.',
-          })
-          dispatch('SCREEN_SHARE_ENDED')
-          queueEvent('SCREEN_SHARE_STOPPED', { severity: 'WARN' })
-        },
-        onError: () => {
-          // A single failed snapshot is not worth telling the candidate about;
-          // the missing sequence number is visible to a reviewer.
-        },
-      })
-      screenCaptureRef.current = sc
-      await sc.start(cfg.screenshotIntervalMs)
-      patchCapture({ screenSharing: true })
-    },
-    [dispatch, patchCapture, queueEvent]
-  )
-
   const requestPermissionsAndStart = useCallback(async (): Promise<boolean> => {
-    if (!enabled) return false
-    if (startingRef.current) return false
+    if (!enabled || startingRef.current) return false
     const ref = attemptRefRef.current
     if (!ref) {
       setStartError({ message: 'This assessment is not ready yet. Please reload the page.' })
@@ -493,19 +565,8 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
     dispatch('START_REQUESTED')
 
     try {
-      // Screen first, then camera.
-      //
-      // getDisplayMedia requires transient user activation and the activation
-      // from the click expires within a few seconds. A first-time camera prompt
-      // can easily outlast it, so asking for the screen while the gesture is
-      // still fresh is what stops "allow camera" from making screen sharing
-      // impossible.
-      //
-      // Screen sharing is always required at this point, which is the config's
-      // default. PROCTORING_SCREEN_REQUIRED=false cannot be honoured here: the
-      // flag arrives with the session config, and the session must not be
-      // created until permissions are granted, or a candidate who then denies
-      // them would leave a live session that /start would happily accept.
+      // Screen first: getDisplayMedia needs transient user activation, which
+      // a first-time camera prompt can outlast.
       const screenStream = await acquireScreen()
       if (!screenStream) {
         dispatch('PERMISSIONS_DENIED')
@@ -528,42 +589,34 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
             : 'The camera and microphone could not be started. Please close other apps using them and try again.'
         setCamera({ state: denied ? 'DENIED' : 'FAILED', message })
         setMicrophone({ state: denied ? 'DENIED' : 'FAILED', message })
-        screenStream.getTracks().forEach(t => t.stop())
+        stopStream(screenStream)
         setScreen(IDLE_DEVICE)
         dispatch('PERMISSIONS_DENIED')
         return false
       }
 
-      cameraStreamRef.current = cameraStream
       const hasVideo = cameraStream.getVideoTracks().length > 0
       const hasAudio = cameraStream.getAudioTracks().length > 0
-      setCamera(
-        hasVideo
-          ? { state: 'READY' }
-          : { state: 'FAILED', message: 'No camera track was produced. Please check your camera.' }
-      )
-      setMicrophone(
-        hasAudio
-          ? { state: 'READY' }
-          : { state: 'FAILED', message: 'No microphone track was produced. Please check your microphone.' }
-      )
+      setCamera(hasVideo ? { state: 'READY' } : { state: 'FAILED', message: 'No camera track was produced. Please check your camera.' })
+      setMicrophone(hasAudio ? { state: 'READY' } : { state: 'FAILED', message: 'No microphone track was produced. Please check your microphone.' })
       if (!hasVideo || !hasAudio) {
+        // Setup cancelled: nothing may stay live.
+        stopStream(cameraStream)
+        stopStream(screenStream)
         dispatch('PERMISSIONS_DENIED')
         return false
       }
+      cameraStreamRef.current = cameraStream
       screenStreamRef.current = screenStream
       dispatch('PERMISSIONS_GRANTED')
 
-      // Only now is a session created. Doing it before the prompts would
-      // reserve storage for a candidate who then denies permission.
+      // Only now is a session created, so a denial never leaves one behind
+      // for /start to accept.
       const started = await proctoringApi.startSession(ref)
       if (!started.ok) {
         if (started.status === 503) {
-          dispatch('STORAGE_UNAVAILABLE')
-          setStartError({
-            message: 'Proctored assessment is temporarily unavailable. Please try again later.',
-            code: started.code,
-          })
+          dispatch('PROCTORING_UNAVAILABLE')
+          setStartError({ message: 'Proctored assessment is temporarily unavailable. Please try again later.', code: started.code })
         } else {
           setStartError({ message: started.error, code: started.code })
           dispatch('PERMISSIONS_DENIED')
@@ -572,102 +625,37 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
         return false
       }
 
-      const cfg = started.data.config
-      configRef.current = cfg
+      sessionIdRef.current = started.data.sessionId
       startedAtRef.current = performance.now()
       finalizedRef.current = false
+      heartbeatFailuresRef.current = 0
+      gateRef.current.reset()
+      queueRef.current = new EventQueue({ send: sendBatch })
 
-      queueRef.current = new UploadQueue({
-        maxItems: MAX_QUEUED_UPLOADS,
-        maxRetries: UPLOAD_MAX_RETRIES,
-        baseDelayMs: UPLOAD_BASE_DELAY_MS,
-        upload: uploadItem,
-        onStateChange: onQueueChange,
+      const integrity = new IntegrityMonitor({
+        onEvent: handleIntegrityEvent,
+        onHealthChange: handleHealthChange,
+        onPageHide: () => { void queueRef.current?.flush({ keepalive: true }) },
       })
+      integrityRef.current = integrity
+      // Watch before anything else runs, so a device yanked during startup is
+      // still reported.
+      watchCameraTracks(integrity, cameraStream)
+      integrity.watchTrack('screen', screenStream.getVideoTracks()[0])
+      integrity.attachPage()
+      patchHealth({ connection: 'OK' })
 
-      // Track-ended listeners before capture starts, so a device yanked during
-      // startup is still reported rather than looking like a silent stall.
-      cameraStream.getVideoTracks().forEach(track => {
-        track.addEventListener('ended', () => {
-          patchCapture({ cameraLive: false })
-          setCamera({ state: 'FAILED', message: 'The camera has stopped.' })
-          dispatch('CAMERA_ENDED')
-          queueEvent('CAMERA_STOPPED', { severity: 'WARN' })
-        })
-      })
-      cameraStream.getAudioTracks().forEach(track => {
-        track.addEventListener('ended', () => {
-          patchCapture({ micLive: false })
-          setMicrophone({ state: 'FAILED', message: 'The microphone has stopped.' })
-          dispatch('MICROPHONE_ENDED')
-          queueEvent('MICROPHONE_STOPPED', { severity: 'WARN' })
-        })
-      })
+      enqueue('PROCTORING_STARTED', { metadata: { resumed: started.data.resumed } })
+      enqueue('SCREEN_SHARE_STARTED', { metadata: { displaySurface: displaySurfaceOf(screenStream) } })
 
-      const recorder = new WebcamRecorder({
-        stream: cameraStream,
-        segmentMs: cfg.videoSegmentMs,
-        videoBitsPerSecond: cfg.videoBitsPerSecond,
-        audioBitsPerSecond: cfg.audioBitsPerSecond,
-        onSegment: segment => {
-          queueRef.current?.enqueue({
-            id: `segment-${segment.sequence}`,
-            kind: 'WEBCAM_SEGMENT',
-            sequence: segment.sequence,
-            blob: segment.blob,
-            capturedAt: segment.capturedAt,
-            elapsedMs: segment.elapsedMs,
-            questionId: questionIdRef.current,
-          })
-        },
-        onError: () => {
-          patchCapture({ recording: false })
-        },
-      })
-      recorderRef.current = recorder
-      recorder.start()
-      patchCapture({ recording: true, cameraLive: true, micLive: true })
-
-      await startScreenCapture(screenStream, cfg)
-
-      // Gaze reads from its own element rather than the preview, so inference
-      // is unaffected by the page unmounting the self-view when it switches
-      // from the pre-check screen to the questions.
-      try {
-        const inference = document.createElement('video')
-        inference.muted = true
-        inference.playsInline = true
-        inference.srcObject = cameraStream
-        inferenceVideoRef.current = inference
-        await inference.play().catch(() => undefined)
-
-        const monitor = await GazeMonitor.create({
-          onOutput: (out: PipelineOutput) => {
-            out.warnings.forEach(kind => showWarning(kind))
-            out.events.forEach(e => {
-              queueEvent(e.type, { direction: e.direction, durationMs: e.durationMs, severity: 'WARN' })
-            })
-          },
-        })
-        gazeRef.current = monitor
-        monitor.start(inference)
-      } catch {
-        // Gaze analysis is the one part of proctoring that may be absent
-        // without invalidating the evidence - the recording is still made. A
-        // failed model load therefore degrades rather than refusing to start.
-      }
+      // Not awaited: the model loads in the background while the exam opens.
+      // Health reads LOADING until it runs.
+      void startGaze(cameraStream)
 
       dispatch('SESSION_STARTED')
       setCaptureLive(true)
-      queueEvent('PROCTORING_STARTED')
-
-      heartbeatTimerRef.current = setInterval(() => {
-        void sendHeartbeat()
-      }, cfg.heartbeatIntervalMs)
-      eventTimerRef.current = setInterval(() => {
-        void flushEvents()
-      }, EVENT_FLUSH_INTERVAL_MS)
-
+      startTimers(started.data.config.heartbeatIntervalMs)
+      void sendHeartbeat()
       return true
     } catch {
       setStartError({ message: 'Proctoring could not be started. Please try again.' })
@@ -678,110 +666,97 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
       startingRef.current = false
     }
   }, [
-    acquireScreen,
-    dispatch,
-    enabled,
-    flushEvents,
-    onQueueChange,
-    patchCapture,
-    queueEvent,
-    sendHeartbeat,
-    showWarning,
-    startScreenCapture,
-    support.supported,
-    teardown,
-    uploadItem,
+    acquireScreen, dispatch, enabled, enqueue, handleHealthChange, handleIntegrityEvent, patchHealth,
+    sendBatch, sendHeartbeat, startGaze, startTimers, support.supported, teardown, watchCameraTracks,
   ])
 
+  /** From the candidate's click on the resume button: needs the gesture. */
   const resumeScreenShare = useCallback(async (): Promise<boolean> => {
-    const cfg = configRef.current
-    if (!cfg) return false
+    const integrity = integrityRef.current
+    if (!sessionIdRef.current || !integrity) return false
     const stream = await acquireScreen()
     if (!stream) return false
-
-    screenCaptureRef.current?.stop()
-    screenStreamRef.current?.getTracks().forEach(t => t.stop())
+    stopStream(screenStreamRef.current)
     screenStreamRef.current = stream
-    await startScreenCapture(stream, cfg)
+    integrity.watchTrack('screen', stream.getVideoTracks()[0])
+    enqueue('SCREEN_SHARE_RESUMED', { metadata: { displaySurface: displaySurfaceOf(stream) } })
     dispatch('SCREEN_SHARE_RESUMED')
-    queueEvent('SCREEN_SHARE_RESUMED')
     return true
-  }, [acquireScreen, dispatch, queueEvent, startScreenCapture])
+  }, [acquireScreen, dispatch, enqueue])
+
+  const resumeCamera = useCallback(async (): Promise<boolean> => {
+    const integrity = integrityRef.current
+    if (!sessionIdRef.current || !integrity) return false
+    const before = healthRef.current
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+    } catch {
+      setCamera({ state: 'FAILED', message: 'The camera could not be restarted. Please check it is connected and not in use by another app.' })
+      return false
+    }
+    if (stream.getVideoTracks().length === 0 || stream.getAudioTracks().length === 0) {
+      stopStream(stream)
+      return false
+    }
+    stopStream(cameraStreamRef.current)
+    cameraStreamRef.current = stream
+    watchCameraTracks(integrity, stream)
+    if (before.camera !== 'ACTIVE') enqueue('CAMERA_RESTORED', { metadata: { reason: 'reconnected' } })
+    if (before.microphone !== 'ACTIVE') enqueue('MICROPHONE_RESTORED', { metadata: { reason: 'reconnected' } })
+    setCamera({ state: 'READY' })
+    setMicrophone({ state: 'READY' })
+    dispatch('DEVICES_RECOVERED')
+    void startGaze(stream)
+    return true
+  }, [dispatch, enqueue, startGaze, watchCameraTracks])
+
+  /** The server closed the session (stale heartbeat). Reopen it - it resumes in place. */
+  const resumeSession = useCallback(async (): Promise<boolean> => {
+    const ref = attemptRefRef.current
+    if (!ref || finalizedRef.current) return false
+    const started = await proctoringApi.startSession(ref)
+    if (!started.ok) {
+      setStartError({ message: started.error, code: started.code })
+      return false
+    }
+    sessionIdRef.current = started.data.sessionId
+    setStartError(null)
+    dispatch('SESSION_RESUMED')
+    void sendHeartbeat()
+    return true
+  }, [dispatch, sendHeartbeat])
 
   const finalize = useCallback(async (): Promise<void> => {
-    if (!enabled) return
-    if (finalizedRef.current) return
+    if (!enabled || finalizedRef.current) return
     finalizedRef.current = true
     dispatch('FINALIZE')
-
-    try {
-      // Flush the final segment into the queue before anything is torn down,
-      // or the last stretch of the assessment is simply missing.
-      await recorderRef.current?.stop()
-    } catch {
-      // A recorder that already errored has nothing left to flush.
-    }
-
-    try {
-      screenCaptureRef.current?.stop()
-    } catch {
-      // Already stopped.
-    }
-
-    queueEvent('PROCTORING_ENDED')
-
+    clearTimers()
+    // Keep the episode in progress: the last look away must not be lost.
+    stopGaze(true)
+    enqueue('PROCTORING_ENDED')
     const queue = queueRef.current
-    if (queue) {
-      // Raced, not awaited outright: a candidate on a dying connection must not
-      // be held at the submit button by an upload that will never finish.
-      await Promise.race([
-        queue.drain(),
-        new Promise<void>(resolve => setTimeout(resolve, FINALIZE_DRAIN_TIMEOUT_MS)),
-      ])
-    }
-
-    try {
-      await flushEvents()
-    } catch {
-      // Events are corroborating evidence; losing the last batch is survivable.
-    }
-
+    if (queue) await withTimeout(queue.flush(), FINALIZE_FLUSH_TIMEOUT_MS)
     const ref = attemptRefRef.current
-    if (ref) {
-      // Best effort. The stale sweep and the submit route's safety net both
-      // close a session whose client never got here.
+    if (ref && sessionIdRef.current) {
+      // Best effort. The submit route's safety net closes it otherwise.
       await proctoringApi.finalize(ref)
     }
-
     teardown()
     dispatch('FINALIZED')
     setCaptureLive(false)
-  }, [dispatch, enabled, flushEvents, queueEvent, teardown])
+  }, [clearTimers, dispatch, enabled, enqueue, stopGaze, teardown])
 
-  // Tab and focus changes are proctoring evidence in their own right. The pages
-  // already record their own violations; these are the proctoring-side rows, so
-  // a reviewer sees them on the same timeline as the gaze warnings.
+  // Back online: report and flush at once rather than waiting for the timers.
   useEffect(() => {
     if (!enabled || !captureLive) return
-
-    const onVisibility = () => {
-      if (document.visibilityState === 'hidden') queueEvent('TAB_HIDDEN', { severity: 'WARN' })
+    const onOnline = () => {
+      void sendHeartbeat()
+      void queueRef.current?.flush()
     }
-    const onBlur = () => queueEvent('WINDOW_BLURRED', { severity: 'WARN' })
-    const onOffline = () => dispatch('OFFLINE')
-    const onOnline = () => dispatch('ONLINE')
-
-    document.addEventListener('visibilitychange', onVisibility)
-    window.addEventListener('blur', onBlur)
-    window.addEventListener('offline', onOffline)
     window.addEventListener('online', onOnline)
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibility)
-      window.removeEventListener('blur', onBlur)
-      window.removeEventListener('offline', onOffline)
-      window.removeEventListener('online', onOnline)
-    }
-  }, [dispatch, enabled, captureLive, queueEvent])
+    return () => window.removeEventListener('online', onOnline)
+  }, [enabled, captureLive, sendHeartbeat])
 
   const needsRecovery = enabled && alreadyStarted && !captureLive
 
@@ -790,12 +765,15 @@ export function useProctoring(opts: UseProctoringOptions): UseProctoringResult {
     support,
     devices: { camera, microphone, screen },
     warning,
-    uploads,
-    capture,
+    health,
+    capture: captureFrom(health),
     startError,
     needsRecovery,
+    diagnostics,
     requestPermissionsAndStart,
     resumeScreenShare,
+    resumeCamera,
+    resumeSession,
     finalize,
     videoRef,
   }
