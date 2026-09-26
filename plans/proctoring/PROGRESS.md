@@ -793,40 +793,68 @@ only the session's `DEGRADED` status (server-derived from what the client
 *chooses* to report) and the gap/interruption record are trustworthy. Only a
 server-side media check could close that, and this phase forbids media.
 
-**GAP found during Step 5 build verification, not fixed:** the first
-`.next/static` grep (`Proctoring diagnostics\|diag-iris-x`) is expected to
-produce no output, but production build `2026-09-26` matched one chunk,
-`.next/static/chunks/5363-be52d63da8e1f932.js`, containing the literal string
-`"Proctoring diagnostics (dev only)"` and the `diag-iris-x` test id. The
-runtime behaviour is correct and is pinned by
-`tests/proctoring-diagnostics-panel.test.tsx` → `'renders nothing unless
-diagnostics are enabled (the production case)'` and
-`tests/proctoring-diagnostics.test.ts` → `'is off outside development'` — the
-panel genuinely never renders in production, because `DIAGNOSTICS_ENABLED`
-folds to `false` there. What does not happen is bundle-level elimination of
-the JSX text: `ProctoringDiagnostics`'s `enabled` parameter defaults to the
-imported `DIAGNOSTICS_ENABLED` constant, and the minifier does not fold that
-default across the module boundary into the `if (!enabled) return null`
-guard, so the dead branch's source text — field labels and the `dev only`
-string, no thresholds or numbers — ships inert in the client bundle. Left as
-a GAP rather than fixed here: closing it needs a component-boundary change
-(e.g. an inline, same-file `process.env` check, or gating the import itself)
-that risks touching the two tests above which pass `enabled` explicitly as an
-override, and Task 15's scope authorizes product fixes only for gaps found in
-the Step 4 security review, not Step 5 build verification. See the Task 15
-report for the exact grep output.
+**GAP found during Step 5 build verification, FIXED in fix round 1
+(2026-09-26), controller ruling R14** — P25 ("not visible in production")
+outranks the brief's Step-4-only fix scope, so this product change was
+authorized. Original problem: the first `.next/static` grep (`Proctoring
+diagnostics\|diag-iris-x`) is expected to produce no output, but the
+`2026-09-26` production build matched one chunk,
+`.next/static/chunks/5363-be52d63da8e1f932.js`, containing the literal
+string `"Proctoring diagnostics (dev only)"` and the `diag-iris-x` test id.
+Root cause: `ProctoringDiagnostics`'s `enabled` parameter defaulted to the
+imported `DIAGNOSTICS_ENABLED` constant, and the minifier does not fold an
+imported, already-computed boolean across a module boundary into a
+downstream `if (!enabled) return null` guard the way it folds a literal
+`process.env` comparison written directly in the same expression.
 
-#### Verification
+**Fix:** `src/components/proctoring/ProctoringExamOverlay.tsx` no longer
+statically imports `ProctoringDiagnostics`. It now holds a module-level
+constant
+
+```ts
+const ProctoringDiagnosticsPanel: ComponentType<ProctoringDiagnosticsProps> | null =
+  process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_PROCTORING_DIAGNOSTICS === 'true'
+    ? dynamic(() => import('./ProctoringDiagnostics'))
+    : null
+```
+
+written as a direct, literal `process.env` comparison (not a re-exported
+boolean), gating a `next/dynamic` import. Webpack recognises that exact
+shape during dependency discovery and drops the `import()` before the module
+graph is built in a production compile, so `ProctoringDiagnostics.tsx` (and
+its dev-only strings) is never emitted into any chunk at all — not merely
+left unreached at runtime. `ProctoringDiagnostics.tsx` itself is unchanged
+(still exports a `ProctoringDiagnosticsProps` type now, for the wrapper's
+typing) so `tests/proctoring-diagnostics-panel.test.tsx` and
+`tests/proctoring-diagnostics.test.ts`, which import and render it directly
+and pass `enabled` explicitly, are untouched and still pass.
+
+Re-verified against a clean production build (`rm -rf .next && npm run
+build`):
+
+```
+$ grep -rl "Proctoring diagnostics\|diag-iris-x" .next/static
+(no output)
+$ grep -rl "Proctoring diagnostics\|diag-iris-x" .next
+(no output)
+```
+
+Clean. No GAP remains from Task 15's Step 5.
+
+#### Verification (fix round 1, 2026-09-26)
 
 `npx tsc --noEmit -p tsconfig.json`: exit 0.
 
-`npx vitest run`: **35 files, 398 tests, all passed** (includes the 4 new
-`tests/proctoring-no-media.test.ts` cases).
+`npx vitest run tests/proctoring-diagnostics-panel.test.tsx
+tests/proctoring-diagnostics.test.ts tests/proctoring-candidate-ui.test.tsx
+tests/proctoring-use-proctoring.test.tsx`: **4 files, 43 tests, all passed.**
+
+`npx vitest run` (full suite): **35 files, 398 tests, all passed.**
 
 `npm run build`: exit 0.
 
-`grep -rl "Proctoring diagnostics\|diag-iris-x" .next/static`: **one hit** —
-see the GAP above. Not clean.
+`grep -rl "Proctoring diagnostics\|diag-iris-x" .next/static`: no output.
+Clean (previously one hit — fixed).
 
 `grep -rlE "R2_|X-Amz|MediaRecorder" .next/static`: no output. Clean.
 

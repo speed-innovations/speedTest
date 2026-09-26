@@ -25,17 +25,19 @@ function Row({ label, value, testId }: { label: string; value: string; testId?: 
   )
 }
 
+export interface ProctoringDiagnosticsProps {
+  snapshot: DiagnosticsSnapshot | null
+  state: ProctoringClientState
+  health: ProctoringHealth
+  enabled?: boolean
+}
+
 export default function ProctoringDiagnostics({
   snapshot,
   state,
   health,
   enabled = DIAGNOSTICS_ENABLED,
-}: {
-  snapshot: DiagnosticsSnapshot | null
-  state: ProctoringClientState
-  health: ProctoringHealth
-  enabled?: boolean
-}) {
+}: ProctoringDiagnosticsProps) {
   if (!enabled) return null
   const s = snapshot
   return (

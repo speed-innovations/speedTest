@@ -26,7 +26,7 @@ credentials are needed. The earlier media-recording design (Parts 2, 3, 5, 7,
 | Database | Local Postgres only — `speedtest:speedtest@localhost:5432/speedtest`. |
 | Supabase | **Untouched.** No `migrate deploy` against production, at any point. |
 | Render | No deploy. A push to `main` is what triggers one, and there are none. |
-| Storage | `PROCTORING_STORAGE_PROVIDER=mock` for tests; a real R2 bucket may be wired for local manual testing with `http://localhost:3001` in CORS. |
+| Storage | None. No media is captured, encoded, uploaded or stored, so no storage provider, bucket or credentials are needed at any point. |
 
 `main` is the deploy trigger, which is why this work lives on a branch: an
 accidental push would deploy half-built proctoring to production.
