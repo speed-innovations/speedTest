@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { prisma } from '@/lib/db'
 import { ingestEvents } from '@/lib/proctoring/events'
 import type { IncomingEvent } from '@/lib/proctoring/schemas'
+import { eventBatchSchema } from '@/lib/proctoring/schemas'
 
 /**
  * Event ingest against a real database.
@@ -93,10 +94,9 @@ let n = 0
 function gaze(id?: string): IncomingEvent {
   return {
     clientEventId: id ?? `evt-${TAG}-${n++}`,
-    type: 'GAZE_LEFT',
+    type: 'LOOKING_LEFT',
     direction: 'LEFT',
-    occurredAt: new Date().toISOString(),
-    severity: 'WARN',
+    startedAt: new Date().toISOString(),
   }
 }
 
@@ -135,8 +135,7 @@ describe('ingestEvents', () => {
     await ingestEvents(sessionId, [{
       clientEventId: 'evt-tabhidden-01',
       type: 'TAB_HIDDEN',
-      occurredAt: new Date().toISOString(),
-      severity: 'INFO',
+      startedAt: new Date().toISOString(),
     }], ASSIGNED)
     const s = await prisma.proctoringSession.findUniqueOrThrow({ where: { id: sessionId } })
     expect(s.gazeWarningCount).toBe(0)
@@ -168,18 +167,18 @@ describe('ingestEvents', () => {
     expect(row.questionId).toBeNull()
   })
 
-  it('stamps receivedAt server-side even when occurredAt is implausible', async () => {
+  it('stamps receivedAt server-side even when startedAt is implausible', async () => {
     // A candidate's clock can be wrong, or set wrong on purpose. The server's
     // own receipt time is what a reviewer can rely on.
     const before = Date.now()
     await ingestEvents(sessionId, [{
       ...gaze('evt-badclock-0001'),
-      occurredAt: new Date('2001-01-01T00:00:00.000Z').toISOString(),
+      startedAt: new Date('2001-01-01T00:00:00.000Z').toISOString(),
     }], ASSIGNED)
     const row = await prisma.proctoringEvent.findFirstOrThrow({
       where: { proctoringSessionId: sessionId, clientEventId: 'evt-badclock-0001' },
     })
-    expect(row.occurredAt.getUTCFullYear()).toBe(2001)
+    expect(row.startedAt.getUTCFullYear()).toBe(2001)
     expect(row.receivedAt.getTime()).toBeGreaterThanOrEqual(before - 1000)
   })
 
@@ -192,5 +191,77 @@ describe('ingestEvents', () => {
       where: { proctoringSessionId: sessionId, clientEventId: 'evt-metadata-0001' },
     })
     expect(row.metadata).toEqual({ reason: 'sustained', frames: 9, recovered: false })
+  })
+
+  it('stores endedAt, duration and confidence for an episode', async () => {
+    const start = new Date(Date.now() - 3000)
+    await ingestEvents(sessionId, [{
+      clientEventId: 'evt-episode-00001',
+      type: 'FACE_MISSING',
+      startedAt: start.toISOString(),
+      endedAt: new Date(start.getTime() + 2600).toISOString(),
+      durationMs: 2600,
+      confidence: 0.9,
+    }], ASSIGNED)
+    const row = await prisma.proctoringEvent.findFirstOrThrow({
+      where: { proctoringSessionId: sessionId, clientEventId: 'evt-episode-00001' },
+    })
+    expect(row.endedAt!.getTime() - row.startedAt.getTime()).toBe(2600)
+    expect(row.durationMs).toBe(2600)
+    expect(row.confidence).toBeCloseTo(0.9)
+  })
+
+  it('derives severity server-side from the type', async () => {
+    await ingestEvents(sessionId, [
+      { clientEventId: 'evt-sev-blur-001', type: 'WINDOW_BLUR', startedAt: new Date().toISOString() },
+      { clientEventId: 'evt-sev-scrn-001', type: 'SCREEN_SHARE_INTERRUPTED', startedAt: new Date().toISOString() },
+    ], ASSIGNED)
+    const rows = await prisma.proctoringEvent.findMany({
+      where: { proctoringSessionId: sessionId, clientEventId: { in: ['evt-sev-blur-001', 'evt-sev-scrn-001'] } },
+      orderBy: { clientEventId: 'asc' },
+    })
+    expect(rows.map(r => r.severity)).toEqual(['INFO', 'WARN'])
+  })
+})
+
+describe('eventBatchSchema', () => {
+  const base = { attemptId: 'a1', kind: 'scheduled', parentId: 'p1' }
+  const ok = { clientEventId: 'evt-schema-00001', type: 'LOOKING_DOWN', startedAt: new Date().toISOString() }
+
+  it('accepts a well-formed metadata event', () => {
+    expect(eventBatchSchema.safeParse({ ...base, events: [ok] }).success).toBe(true)
+  })
+
+  it('rejects a server-only type from a client', () => {
+    expect(eventBatchSchema.safeParse({ ...base, events: [{ ...ok, type: 'HEARTBEAT_MISSED' }] }).success).toBe(false)
+  })
+
+  it('rejects retired media and gaze names', () => {
+    const retired = ['UPLOAD_FAILURE', 'GAZE_LEFT', 'PHONE_DETECTED']
+    retired.forEach(type => {
+      expect(eventBatchSchema.safeParse({ ...base, events: [{ ...ok, type }] }).success).toBe(false)
+    })
+  })
+
+  it('rejects anything shaped like media in metadata', () => {
+    const frame = 'data:image/jpeg;base64,' + 'A'.repeat(4000)
+    expect(eventBatchSchema.safeParse({ ...base, events: [{ ...ok, metadata: { frame } }] }).success).toBe(false)
+  })
+
+  it('rejects the reserved srv- id prefix', () => {
+    expect(eventBatchSchema.safeParse({ ...base, events: [{ ...ok, clientEventId: 'srv-hb-x-123' }] }).success).toBe(false)
+  })
+
+  it('rejects an end before the start and an out-of-range confidence', () => {
+    const start = new Date()
+    const before = new Date(start.getTime() - 1000).toISOString()
+    expect(eventBatchSchema.safeParse({ ...base, events: [{ ...ok, startedAt: start.toISOString(), endedAt: before }] }).success).toBe(false)
+    expect(eventBatchSchema.safeParse({ ...base, events: [{ ...ok, confidence: 1.5 }] }).success).toBe(false)
+  })
+
+  it('caps metadata keys', () => {
+    const metadata: Record<string, number> = {}
+    for (let i = 0; i < 13; i++) metadata[`k${i}`] = i
+    expect(eventBatchSchema.safeParse({ ...base, events: [{ ...ok, metadata }] }).success).toBe(false)
   })
 })

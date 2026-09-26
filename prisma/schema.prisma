@@ -371,36 +371,34 @@ enum ProctoringSessionStatus {
   EXPIRED
 }
 
-enum ProctoringAssetType {
-  WEBCAM_SEGMENT
-  SCREENSHOT
-}
-
-enum ProctoringAssetStatus {
-  PENDING
-  UPLOADED
-  FAILED
-  EXPIRED
-  DELETED
-}
-
 enum ProctoringEventType {
-  GAZE_LEFT
-  GAZE_RIGHT
-  GAZE_UP
-  GAZE_DOWN
-  FACE_NOT_DETECTED
-  MULTIPLE_FACES_DETECTED
-  SCREEN_SHARE_STOPPED
+  FACE_MISSING
+  MULTIPLE_FACES
+  LOOKING_LEFT
+  LOOKING_RIGHT
+  LOOKING_UP
+  LOOKING_DOWN
+  SUSTAINED_DOWNWARD_ATTENTION
+  REPEATED_DOWNWARD_ATTENTION
+  CAMERA_INTERRUPTED
+  CAMERA_RESTORED
+  MICROPHONE_INTERRUPTED
+  MICROPHONE_RESTORED
+  SCREEN_SHARE_STARTED
+  SCREEN_SHARE_INTERRUPTED
   SCREEN_SHARE_RESUMED
-  CAMERA_STOPPED
-  MICROPHONE_STOPPED
   TAB_HIDDEN
-  WINDOW_BLURRED
+  TAB_VISIBLE
+  FULLSCREEN_EXITED
+  FULLSCREEN_ENTERED
+  WINDOW_BLUR
+  WINDOW_FOCUS
+  PAGE_HIDDEN
+  GAZE_MONITOR_UNAVAILABLE
   PROCTORING_STARTED
   PROCTORING_ENDED
-  UPLOAD_FAILURE
-  UPLOAD_RECOVERED
+  HEARTBEAT_MISSED
+  PROCTORING_RESUMED
 }
 
 /// One proctoring session per attempt.
@@ -425,23 +423,20 @@ model ProctoringSession {
   startedAt          DateTime?
   endedAt            DateTime?
   lastHeartbeatAt    DateTime?
-  /// startedAt + PROCTORING_RETENTION_HOURS. Assets inherit this.
+  /// After this instant a closed session is EXPIRED and cannot be resumed.
   retentionExpiresAt DateTime
 
-  recordingStarted   Boolean @default(false)
   screenShareStarted Boolean @default(false)
 
-  /// Byte counters are Int, not BigInt - see the note in part-01. Per-row max is
-  /// ~111 MB against a 2.1 GB ceiling; BigInt would break JSON.stringify.
-  storageReservedBytes Int @default(0)
-  storageUsedBytes     Int @default(0)
-  uploadFailureCount   Int @default(0)
-  gazeWarningCount     Int @default(0)
+  gazeWarningCount Int @default(0)
+  /// Heartbeat gaps the server detected. Server-side, so a client cannot hide them.
+  missedHeartbeatCount Int   @default(0)
+  /// Device and monitor health from the latest heartbeat. Small, bounded JSON.
+  lastHealth           Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  assets ProctoringAsset[]
   events ProctoringEvent[]
 
   @@index([status])
@@ -449,42 +444,8 @@ model ProctoringSession {
   @@index([lastHeartbeatAt])
 }
 
-/// A stored media object. Never holds a URL - only the R2 object key, so access
-/// always goes through a freshly signed, short-lived URL.
-model ProctoringAsset {
-  id                  String            @id @default(cuid())
-  proctoringSessionId String
-  session             ProctoringSession @relation(fields: [proctoringSessionId], references: [id], onDelete: Cascade)
-
-  type        ProctoringAssetType
-  /// R2 object key. Contains internal ids only - never a name, email or phone.
-  objectKey   String              @unique
-  contentType String
-  byteSize    Int                 @default(0)
-  /// Per type, starting at 1. Part of the idempotency key.
-  sequence    Int
-
-  capturedAt DateTime
-  uploadedAt DateTime?
-  /// Access is refused past this instant even if R2 has not yet deleted the object.
-  expiresAt  DateTime
-  status     ProctoringAssetStatus @default(PENDING)
-
-  /// Milliseconds since the attempt started. The correlation axis for review.
-  elapsedMs  Int?
-  /// Validated against the attempt's assigned question set, else null.
-  questionId String?
-
-  createdAt DateTime @default(now())
-
-  /// Idempotency: a retried completion must not create a second asset.
-  @@unique([proctoringSessionId, type, sequence])
-  @@index([proctoringSessionId, capturedAt])
-  @@index([expiresAt, status])
-}
-
-/// A proctoring observation. Evidence for a human reviewer - never a verdict, and
-/// never an input to scoring. Raw frames and face landmarks are never stored.
+/// A proctoring observation. Metadata only - never frames, images, audio or
+/// landmarks. Evidence for a reviewer, never a verdict or a scoring input.
 model ProctoringEvent {
   id                  String            @id @default(cuid())
   proctoringSessionId String
@@ -493,12 +454,15 @@ model ProctoringEvent {
   type       ProctoringEventType
   /// LEFT / RIGHT / UP / DOWN for gaze events, else null.
   direction  String?
-  /// Client clock, for ordering within a batch.
-  occurredAt DateTime
+  /// Client clock, when the observation began. Orders events within a batch.
+  startedAt  DateTime
+  /// When it ended, for episodes that have a duration.
+  endedAt    DateTime?
   /// Server receipt time. Authoritative when the two disagree.
   receivedAt DateTime            @default(now())
   elapsedMs  Int?
   durationMs Int?
+  confidence Float?
   severity   String              @default("INFO")
   questionId String?
   metadata   Json?
@@ -509,6 +473,6 @@ model ProctoringEvent {
   createdAt DateTime @default(now())
 
   @@unique([proctoringSessionId, clientEventId])
-  @@index([proctoringSessionId, occurredAt])
+  @@index([proctoringSessionId, startedAt])
   @@index([type])
 }

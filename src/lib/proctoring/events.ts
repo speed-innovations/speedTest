@@ -1,16 +1,12 @@
 import { prisma } from '@/lib/db'
 import type { IncomingEvent } from './schemas'
+import { LOOKING_TYPES, severityFor } from './event-types'
 
 /**
- * Proctoring event ingest.
- *
- * These rows are evidence for a human reviewer. They are never inputs to
- * scoring, and they never carry raw frames or face landmarks - only the
- * classification the browser arrived at, and when.
+ * Proctoring event ingest. Metadata only: what the browser concluded, when,
+ * for how long, and how confident. Never frames, never landmarks. Evidence for
+ * a reviewer, never a scoring input.
  */
-
-/** Events that count towards the session's gaze warning tally. */
-const GAZE_TYPES = new Set(['GAZE_LEFT', 'GAZE_RIGHT', 'GAZE_UP', 'GAZE_DOWN'])
 
 export async function ingestEvents(
   sessionId: string,
@@ -25,32 +21,29 @@ export async function ingestEvents(
     clientEventId: e.clientEventId,
     type: e.type,
     direction: e.direction ?? null,
-    // The client clock orders events within a batch; receivedAt is the
-    // server's own and is authoritative when the two disagree.
-    occurredAt: new Date(e.occurredAt),
+    startedAt: new Date(e.startedAt),
+    endedAt: e.endedAt ? new Date(e.endedAt) : null,
+    // The server's receipt time is authoritative over the client clock.
     receivedAt: now,
     elapsedMs: e.elapsedMs ?? null,
     durationMs: e.durationMs ?? null,
-    severity: e.severity,
-    // Same rule as violation/route.ts: accept the question id, but only if it
-    // is one this attempt was actually served. An unassigned id nulls the
-    // column rather than rejecting the event - the observation is still
-    // evidence even when we cannot say which question it happened on.
+    confidence: e.confidence ?? null,
+    // Derived, never client-supplied: a client must not be able to file its
+    // own interruptions as INFO.
+    severity: severityFor(e.type),
+    // Same rule as violation/route.ts: kept only if this attempt was served it.
     questionId: e.questionId && assigned.has(e.questionId) ? e.questionId : null,
     metadata: e.metadata ?? undefined,
   }))
 
-  // One statement, and skipDuplicates makes a retried batch a no-op. Without
-  // this a lost response would double-count a candidate's warnings.
+  // skipDuplicates makes a retried batch a no-op.
   const result = await prisma.proctoringEvent.createMany({ data: rows, skipDuplicates: true })
 
-  const gazeAccepted = rows.filter(r => GAZE_TYPES.has(r.type)).length
-  if (result.count > 0 && gazeAccepted > 0) {
-    // Approximate when a batch was partially duplicate. The exact tally is
-    // always recoverable by counting rows; this is a convenience for listings.
+  const lookingAccepted = rows.filter(r => LOOKING_TYPES.indexOf(r.type) !== -1).length
+  if (result.count > 0 && lookingAccepted > 0) {
     await prisma.proctoringSession.update({
       where: { id: sessionId },
-      data: { gazeWarningCount: { increment: Math.min(gazeAccepted, result.count) } },
+      data: { gazeWarningCount: { increment: Math.min(lookingAccepted, result.count) } },
     })
   }
 

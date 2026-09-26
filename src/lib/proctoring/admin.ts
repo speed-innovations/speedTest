@@ -11,11 +11,14 @@ export interface AdminEventView {
   id: string
   type: string
   direction: string | null
-  occurredAt: Date
+  startedAt: Date
+  endedAt: Date | null
+  confidence: number | null
   elapsedMs: number | null
   durationMs: number | null
   severity: string
   questionId: string | null
+  metadata: unknown
 }
 
 export interface AdminSessionView {
@@ -28,6 +31,8 @@ export interface AdminSessionView {
   retentionExpiresAt: Date
   screenShareStarted: boolean
   gazeWarningCount: number
+  missedHeartbeatCount: number
+  lastHealth: unknown
 }
 
 export interface AdminEvidence {
@@ -37,14 +42,15 @@ export interface AdminEvidence {
 }
 
 const EVENT_SELECT = {
-  id: true, type: true, direction: true, occurredAt: true, elapsedMs: true,
-  durationMs: true, severity: true, questionId: true,
+  id: true, type: true, direction: true, startedAt: true, endedAt: true,
+  confidence: true, elapsedMs: true, durationMs: true, severity: true,
+  questionId: true, metadata: true,
 } as const
 
 const SESSION_SELECT = {
   id: true, status: true, version: true, startedAt: true, endedAt: true,
   lastHeartbeatAt: true, retentionExpiresAt: true, screenShareStarted: true,
-  gazeWarningCount: true,
+  gazeWarningCount: true, missedHeartbeatCount: true, lastHealth: true,
 } as const
 
 export async function getAdminEvidence(attemptId: string, type: AttemptKind): Promise<AdminEvidence> {
@@ -54,7 +60,7 @@ export async function getAdminEvidence(attemptId: string, type: AttemptKind): Pr
   const events = await prisma.proctoringEvent.findMany({
     where: { proctoringSessionId: session.id },
     select: EVENT_SELECT,
-    orderBy: { occurredAt: 'asc' },
+    orderBy: { startedAt: 'asc' },
   })
   return { session, events }
 }

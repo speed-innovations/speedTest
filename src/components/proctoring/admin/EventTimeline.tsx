@@ -19,30 +19,53 @@ export interface TimelineEvent {
   id: string
   type: string
   direction: string | null
-  occurredAt: string | Date
+  startedAt: string | Date
+  endedAt?: string | Date | null
   elapsedMs: number | null
   durationMs: number | null
+  confidence?: number | null
   severity: string
+  metadata?: unknown
 }
 
 /** Plain descriptions of the observation. No judgement, no severity language. */
 const DESCRIPTION: Record<string, string> = {
-  GAZE_LEFT: 'Looking left',
-  GAZE_RIGHT: 'Looking right',
-  GAZE_UP: 'Looking up',
-  GAZE_DOWN: 'Looking down',
-  FACE_NOT_DETECTED: 'Face not detected',
-  MULTIPLE_FACES_DETECTED: 'Second face detected',
-  SCREEN_SHARE_STOPPED: 'Screen sharing stopped',
+  FACE_MISSING: 'Face not visible',
+  MULTIPLE_FACES: 'More than one face visible',
+  LOOKING_LEFT: 'Looking left',
+  LOOKING_RIGHT: 'Looking right',
+  LOOKING_UP: 'Looking up',
+  LOOKING_DOWN: 'Looking down',
+  SUSTAINED_DOWNWARD_ATTENTION: 'Sustained downward attention',
+  REPEATED_DOWNWARD_ATTENTION: 'Repeated downward attention',
+  CAMERA_INTERRUPTED: 'Camera interrupted',
+  CAMERA_RESTORED: 'Camera restored',
+  MICROPHONE_INTERRUPTED: 'Microphone interrupted',
+  MICROPHONE_RESTORED: 'Microphone restored',
+  SCREEN_SHARE_STARTED: 'Screen sharing started',
+  SCREEN_SHARE_INTERRUPTED: 'Screen sharing interrupted',
   SCREEN_SHARE_RESUMED: 'Screen sharing resumed',
-  CAMERA_STOPPED: 'Camera stopped',
-  MICROPHONE_STOPPED: 'Microphone stopped',
-  TAB_HIDDEN: 'Browser tab hidden',
-  WINDOW_BLURRED: 'Window lost focus',
+  TAB_HIDDEN: 'Assessment tab hidden',
+  TAB_VISIBLE: 'Assessment tab visible again',
+  FULLSCREEN_EXITED: 'Left full screen',
+  FULLSCREEN_ENTERED: 'Entered full screen',
+  WINDOW_BLUR: 'Window lost focus',
+  WINDOW_FOCUS: 'Window regained focus',
+  PAGE_HIDDEN: 'Page closed or navigated away',
+  GAZE_MONITOR_UNAVAILABLE: 'Gaze analysis could not run',
   PROCTORING_STARTED: 'Proctoring started',
   PROCTORING_ENDED: 'Proctoring ended',
-  UPLOAD_FAILURE: 'Evidence upload failed',
-  UPLOAD_RECOVERED: 'Evidence upload recovered',
+  HEARTBEAT_MISSED: 'Proctoring connection gap',
+  PROCTORING_RESUMED: 'Proctoring resumed',
+}
+
+function describeEvent(e: TimelineEvent): string {
+  const base = DESCRIPTION[e.type] ?? e.type.toLowerCase().replace(/_/g, ' ')
+  const meta = (e.metadata ?? null) as { horizontal?: unknown } | null
+  if (e.type === 'LOOKING_DOWN' && meta && (meta.horizontal === 'LEFT' || meta.horizontal === 'RIGHT')) {
+    return `${base} and ${String(meta.horizontal).toLowerCase()}`
+  }
+  return base
 }
 
 function formatElapsed(ms: number | null): string {
@@ -77,7 +100,7 @@ export default function EventTimeline({ events }: { events: TimelineEvent[] }) {
     if (ae !== null && be !== null) return ae - be
     if (ae !== null) return -1
     if (be !== null) return 1
-    return new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()
+    return new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime()
   })
 
   return (
@@ -91,7 +114,7 @@ export default function EventTimeline({ events }: { events: TimelineEvent[] }) {
                 {formatElapsed(e.elapsedMs)}
               </span>
               <span className="text-gray-700 flex-1 min-w-0">
-                {DESCRIPTION[e.type] ?? e.type.toLowerCase().replace(/_/g, ' ')}
+                {describeEvent(e)}
               </span>
               {duration && (
                 <span className="font-mono text-xs text-gray-500 flex-shrink-0">{duration}</span>

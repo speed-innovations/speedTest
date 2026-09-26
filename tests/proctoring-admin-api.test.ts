@@ -94,13 +94,13 @@ beforeAll(async () => {
   await prisma.proctoringEvent.createMany({
     data: [
       {
-        proctoringSessionId: scheduledSessionId, clientEventId: `${TAG}-e1`, type: 'GAZE_LEFT',
-        direction: 'LEFT', occurredAt: new Date(Date.now() - 1000), elapsedMs: 255_000,
-        durationMs: 2100, severity: 'WARN',
+        proctoringSessionId: scheduledSessionId, clientEventId: `${TAG}-e1`, type: 'LOOKING_LEFT',
+        direction: 'LEFT', startedAt: new Date(Date.now() - 1000), elapsedMs: 255_000,
+        durationMs: 2100,
       },
       {
-        proctoringSessionId: scheduledSessionId, clientEventId: `${TAG}-e2`, type: 'SCREEN_SHARE_STOPPED',
-        occurredAt: new Date(Date.now() - 500), elapsedMs: 1_112_000, severity: 'WARN',
+        proctoringSessionId: scheduledSessionId, clientEventId: `${TAG}-e2`, type: 'SCREEN_SHARE_INTERRUPTED',
+        startedAt: new Date(Date.now() - 500), elapsedMs: 1_112_000,
       },
     ],
   })
@@ -152,7 +152,7 @@ describe('getAdminEvidence', () => {
 
   it('orders events by time', async () => {
     const evidence = await getAdminEvidence(scheduledAttemptId, 'scheduled')
-    const times = evidence.events.map(e => new Date(e.occurredAt).getTime())
+    const times = evidence.events.map(e => new Date(e.startedAt).getTime())
     expect(times[0]).toBeLessThanOrEqual(times[1])
   })
 })
