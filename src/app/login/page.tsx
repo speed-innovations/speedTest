@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import SpeedLogo from '@/components/ui/SpeedLogo'
 import { Eye, EyeOff, LogIn } from 'lucide-react'
+import { LOGIN_UNAVAILABLE } from '@/lib/auth-errors'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -24,8 +25,13 @@ export default function LoginPage() {
       toast.success('Welcome back!')
       // Redirect based on role - middleware will handle this
       router.push('/dashboard')
-    } else {
+    } else if (res?.error === LOGIN_UNAVAILABLE) {
+      toast.error('Sign-in is temporarily unavailable. Please try again shortly.')
+    } else if (res?.error === 'CredentialsSignin') {
       toast.error('Invalid credentials')
+    } else {
+      // Network failure, NextAuth misconfiguration, etc. — not the user's fault.
+      toast.error('Could not sign in. Please try again shortly.')
     }
   }
 
