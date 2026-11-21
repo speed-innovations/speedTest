@@ -26,7 +26,15 @@ export default function UploadCandidatesPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
       setResult(data)
-      toast.success(`${data.imported} candidates imported!`)
+      toast.success(`${data.imported} imported, ${data.emailed ?? 0} credentials emails sent`)
+      const failed: { email: string; reason: string }[] = data.emailFailures ?? []
+      if (failed.length) {
+        toast.error(
+          `${failed.length} credentials email${failed.length > 1 ? 's' : ''} NOT sent - ask your admin to resend.\n` +
+          failed.slice(0, 5).map(f => `${f.email}: ${f.reason}`).join('\n'),
+          { duration: 15000 }
+        )
+      }
     } catch (err: any) {
       toast.error(err.message)
     } finally {

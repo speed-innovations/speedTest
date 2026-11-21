@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import bcrypt from 'bcryptjs'
 import { generatePassword } from '@/lib/password'
-import { sendCredentialsEmail } from '@/lib/email'
+import { sendCredentialsEmail, emailFailureReason } from '@/lib/email'
 import { getLoginUrl } from '@/lib/url'
 
 
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     })
     return NextResponse.json({ success: true, emailSent: true })
   } catch (err) {
-    console.error('Email send failed:', err)
-    return NextResponse.json({ success: true, emailSent: false, tempPassword: rawPassword })
+    // sendCredentialsEmail has already logged the reason (never the password).
+    return NextResponse.json({ success: true, emailSent: false, emailError: emailFailureReason(err), tempPassword: rawPassword })
   }
 }

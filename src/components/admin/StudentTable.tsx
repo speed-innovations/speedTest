@@ -31,8 +31,10 @@ export default function StudentTable({ students }: { students: Student[] }) {
         body: JSON.stringify({ userId })
       })
       const data = await res.json()
-      if (data.emailSent === false && data.tempPassword) {
-        toast.success(`Email failed. New temp password: ${data.tempPassword}`, { duration: 10000 })
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to send')
+      } else if (data.emailSent === false && data.tempPassword) {
+        toast.error(`Email NOT sent (${data.emailError ?? 'unknown error'}). New temp password: ${data.tempPassword}`, { duration: 20000 })
       } else {
         toast.success('Credentials email sent!')
       }

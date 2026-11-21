@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 import bcrypt from 'bcryptjs'
 import { generatePassword } from '@/lib/password'
-import { sendCredentialsEmail } from '@/lib/email'
+import { sendCredentialsEmail, emailFailureReason } from '@/lib/email'
 import { getLoginUrl } from '@/lib/url'
 
 
@@ -56,9 +56,8 @@ export async function POST(req: NextRequest) {
       role: 'College Coordinator',
     })
   } catch (emailErr) {
-    console.error('Email send failed:', emailErr)
-    // Still return success but note email failed
-    return NextResponse.json({ ...user, emailSent: false, tempPassword: rawPassword }, { status: 201 })
+    // The account exists; report that the email did not go, with Brevo's reason.
+    return NextResponse.json({ ...user, emailSent: false, emailError: emailFailureReason(emailErr), tempPassword: rawPassword }, { status: 201 })
   }
 
   return NextResponse.json({ ...user, emailSent: true }, { status: 201 })

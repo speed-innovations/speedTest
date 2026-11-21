@@ -1,29 +1,42 @@
-// Email is sent through Brevo's HTTPS API (port 443), not SMTP.
-// Render's free tier blocks outbound SMTP ports (25/465/587), so a raw
-// nodemailer/SMTP connection times out there. The HTTPS API is never
-// blocked and works identically on the Node (Render) and workerd
-// (Cloudflare) deploy targets. Called with the global fetch — no SDK.
+// Email is sent only through Brevo's transactional HTTPS API (port 443).
+// There is no SMTP path: Render's free tier blocks outbound SMTP ports
+// (25/465/587). Called with the global fetch — no SDK.
 //
-// EMAIL_FROM must be a sender verified in Brevo (Senders & IP > Senders).
-// Single-sender verification (click a link) is enough to send to any
-// recipient — no domain/DNS required.
+// Required environment: BREVO_API_KEY, and EMAIL_FROM — a sender verified in
+// Brevo (Senders & IP > Senders). The EMAIL_SERVER_* variables are unused.
+//
+// Every send either succeeds (Brevo accepted it, messageId logged) or throws.
+// It used to return quietly when Brevo was not configured, and callers wrapped
+// it in an empty catch, so an import reported "imported!" while no student
+// received anything. Callers must now record the failure and show it.
 const BREVO_ENDPOINT = 'https://api.brevo.com/v3/smtp/email'
 const SEND_TIMEOUT_MS = 10_000
 
-function getSender(): { apiKey: string; from: string } | null {
+export class EmailNotSentError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'EmailNotSentError'
+  }
+}
+
+/** A short, password-free reason for showing to an admin. */
+export function emailFailureReason(err: unknown): string {
+  if (err instanceof Error) return err.name === 'AbortError' ? 'Brevo did not respond within 10s' : err.message
+  return String(err)
+}
+
+function getSender(): { apiKey: string; from: string } {
   const apiKey = process.env.BREVO_API_KEY
   const from = process.env.EMAIL_FROM
-
   if (!apiKey || !from) {
-    console.warn('⚠️ Email not configured. Set BREVO_API_KEY and EMAIL_FROM in the environment')
-    return null
+    throw new EmailNotSentError('Email is not configured: set BREVO_API_KEY and EMAIL_FROM')
   }
   return { apiKey, from }
 }
 
 async function sendViaBrevo(opts: {
   apiKey: string; from: string; to: string; subject: string; html: string
-}) {
+}): Promise<string> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS)
   try {
@@ -47,8 +60,10 @@ async function sendViaBrevo(opts: {
     // is an error whose body explains why (bad key, unverified sender, etc.).
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
-      throw new Error(`Brevo responded ${res.status}: ${detail || 'no body'}`)
+      throw new EmailNotSentError(`Brevo responded ${res.status}: ${detail.slice(0, 300) || 'no body'}`)
     }
+    const body = (await res.json().catch(() => ({}))) as { messageId?: string }
+    return body.messageId ?? '(no messageId)'
   } finally {
     clearTimeout(timer)
   }
@@ -101,21 +116,18 @@ export async function sendCredentialsEmail({
 }: {
   to: string; name: string; email: string; password: string; loginUrl: string; role: string;
 }) {
-  const sender = getSender()
-  if (!sender) {
+  let sender: { apiKey: string; from: string }
+  try {
+    sender = getSender()
+  } catch (err) {
     // Never log the password in a deployed environment — server logs are
     // retained, searchable, and visible to anyone with dashboard access.
     // Locally it is printed so accounts are usable without email configured.
-    console.log(`📧 [SKIPPED] Credentials email for ${to} — email not configured`)
+    console.warn(`📧 Credentials email NOT sent to ${to}: ${emailFailureReason(err)}`)
     if (process.env.NODE_ENV !== 'production') {
       console.log(`   [dev only] Email: ${email} | Password: ${password}`)
-    } else {
-      console.warn(
-        `   Account for ${email} was created but no credentials were delivered. ` +
-        `Configure SENDGRID_API_KEY and use "Resend credentials" to issue a new password.`
-      )
     }
-    return
+    throw err
   }
 
   const content = `
@@ -131,13 +143,20 @@ export async function sendCredentialsEmail({
     <p style="color:#888;font-size:13px;">If you did not expect this email, please contact your administrator.</p>
   `
 
-  await sendViaBrevo({
-    apiKey: sender.apiKey,
-    from: sender.from,
-    to,
-    subject: 'Your SpeedTest Account Credentials',
-    html: brandEmail(content),
-  })
+  try {
+    const messageId = await sendViaBrevo({
+      apiKey: sender.apiKey,
+      from: sender.from,
+      to,
+      subject: 'Your SpeedTest Account Credentials',
+      html: brandEmail(content),
+    })
+    console.log(`📧 Credentials email accepted by Brevo for ${to} (messageId ${messageId})`)
+    return messageId
+  } catch (err) {
+    console.error(`📧 Credentials email NOT sent to ${to}: ${emailFailureReason(err)}`)
+    throw err
+  }
 }
 
 export async function sendTestScheduleEmail({
@@ -146,10 +165,6 @@ export async function sendTestScheduleEmail({
   to: string; name: string; testTitle: string; scheduledAt: Date; duration: number; loginUrl: string;
 }) {
   const sender = getSender()
-  if (!sender) {
-    console.log(`📧 [SKIPPED] Test schedule email for ${to} — email not configured`)
-    return
-  }
 
   const content = `
     <h2>Test Scheduled: ${testTitle}</h2>

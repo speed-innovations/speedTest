@@ -58,7 +58,15 @@ export default function AdminCandidatesPage() {
       const res = await fetch('/api/admin/candidates/import', { method: 'POST', body: formData })
       const data = await res.json()
       if (res.ok) {
-        toast.success(`${data.imported} candidates imported!${data.errors?.length ? ` (${data.errors.length} errors)` : ''}`)
+        const failed: { email: string; reason: string }[] = data.emailFailures ?? []
+        toast.success(`${data.imported} imported, ${data.emailed ?? 0} credentials emails sent${data.errors?.length ? ` (${data.errors.length} rows skipped)` : ''}`)
+        if (failed.length) {
+          toast.error(
+            `${failed.length} credentials email${failed.length > 1 ? 's' : ''} NOT sent - use "Resend credentials" on those candidates.\n` +
+            failed.slice(0, 5).map(f => `${f.email}: ${f.reason}`).join('\n'),
+            { duration: 15000 }
+          )
+        }
         if (data.errors?.length) {
           data.errors.slice(0, 5).forEach((e: string) => toast.error(e, { duration: 5000 }))
         }
@@ -82,8 +90,10 @@ export default function AdminCandidatesPage() {
         body: JSON.stringify({ userId })
       })
       const data = await res.json()
-      if (data.emailSent === false && data.tempPassword) {
-        toast.success(`Email failed. Temp password: ${data.tempPassword}`, { duration: 10000 })
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to send')
+      } else if (data.emailSent === false && data.tempPassword) {
+        toast.error(`Email NOT sent (${data.emailError ?? 'unknown error'}). Temp password: ${data.tempPassword}`, { duration: 20000 })
       } else {
         toast.success('Credentials email sent!')
       }
