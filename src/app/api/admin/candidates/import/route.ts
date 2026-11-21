@@ -5,7 +5,7 @@ import { prisma } from '@/lib/db'
 import bcrypt from 'bcryptjs'
 import { generatePassword } from '@/lib/password'
 import * as XLSX from 'xlsx'
-import { sendCredentialsEmail } from '@/lib/email'
+import { sendCredentialsEmail, emailFailureReason } from '@/lib/email'
 import { getLoginUrl } from '@/lib/url'
 
 
@@ -28,6 +28,8 @@ export async function POST(req: NextRequest) {
     const rows = XLSX.utils.sheet_to_json(ws) as any[]
 
     let imported = 0
+    let emailed = 0
+    const emailFailures: { email: string; reason: string }[] = []
     const errors: string[] = []
 
     for (let i = 0; i < rows.length; i++) {
@@ -79,18 +81,24 @@ export async function POST(req: NextRequest) {
         }
       })
 
+      imported++
+
+      // A failed email must not undo the import, but it must not be silent
+      // either: the student has an account they cannot sign in to until an
+      // admin resends. Record it and report it.
       try {
         await sendCredentialsEmail({
           to: email, name: fullName, email, password: rawPassword,
           loginUrl: getLoginUrl(),
           role: 'Student',
         })
-      } catch { /* email failure should not block import */ }
-
-      imported++
+        emailed++
+      } catch (err) {
+        emailFailures.push({ email, reason: emailFailureReason(err) })
+      }
     }
 
-    return NextResponse.json({ imported, errors, total: rows.length })
+    return NextResponse.json({ imported, emailed, emailFailures, errors, total: rows.length })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

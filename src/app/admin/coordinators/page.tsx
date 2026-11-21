@@ -51,7 +51,7 @@ export default function CoordinatorsPage() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed')
       if (data.emailSent === false && data.tempPassword) {
-        toast.success(`Coordinator created! Email failed. Temp password: ${data.tempPassword}`, { duration: 10000 })
+        toast.error(`Coordinator created, but email NOT sent (${data.emailError ?? "unknown error"}). Temp password: ${data.tempPassword}`, { duration: 20000 })
       } else {
         toast.success('Coordinator created! Credentials sent by email.')
       }
@@ -93,7 +93,7 @@ export default function CoordinatorsPage() {
       })
       const data = await res.json()
       if (data.emailSent === false && data.tempPassword) {
-        toast.success(`Email failed. New temp password: ${data.tempPassword}`, { duration: 10000 })
+        toast.error(`Email NOT sent (${data.emailError ?? "unknown error"}). New temp password: ${data.tempPassword}`, { duration: 20000 })
       } else {
         toast.success('Credentials email sent!')
       }
