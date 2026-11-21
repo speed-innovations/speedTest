@@ -30,6 +30,7 @@ enum AssessmentArea {
   CLOUD
   GENAI
   DEPLOYMENT
+  QA_ENGINEERING
 }
 
 enum TestStatus {

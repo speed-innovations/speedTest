@@ -177,7 +177,7 @@ Download template from Admin → Question Bank → Export
 
 | Column | Values |
 |--------|--------|
-| Area | APTITUDE, DOTNET, COMMUNICATION, AI, PYTHON, JAVA, JAVASCRIPT, SQL, API, CLOUD, GENAI, DEPLOYMENT |
+| Area | APTITUDE, DOTNET, COMMUNICATION, AI, PYTHON, JAVA, JAVASCRIPT, SQL, API, CLOUD, GENAI, DEPLOYMENT, QA_ENGINEERING |
 | Difficulty | EASY, MEDIUM, HARD |
 | Correct Answer | A, B, C, or D |
 | Marks | Numeric (e.g. 1, 2, 0.5) |
