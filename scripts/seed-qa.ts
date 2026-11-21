@@ -65,7 +65,7 @@ const ENTRIES: Entry[] = [
     key: 'D', answer: 'Integration testing', wrong: ['Unit testing', 'System testing', 'Acceptance testing'] },
   { n: 3, tag: T.FUND, q: 'The main purpose of software testing is to:',
     key: 'B', answer: 'Find defects and reduce the risk of failure in production',
-    wrong: ['Prove that the software has no defects at all', "Fix the bugs in the developers' code", 'Make sure the project is delivered on schedule'] },
+    wrong: ['Prove that the software has no defects before it is released to users', "Fix the bugs found in the developers' code before the release", 'Make sure the project is delivered on schedule and within budget'] },
   { n: 4, tag: T.FUND, q: 'Static testing is done:',
     key: 'C', answer: 'Without executing the code, by reviewing documents and code',
     wrong: ['By executing the code with different sets of test data', 'Only after the application is deployed to production', 'Using automated tools that run the application under load'] },
@@ -74,10 +74,10 @@ const ENTRIES: Entry[] = [
     wrong: ['Defects cluster together', 'Early testing saves time and money', 'Absence-of-errors fallacy'] },
 
   { n: 6, tag: T.REQ, q: 'Which document maps each requirement to its test cases?',
-    key: 'C', answer: 'Requirement Traceability Matrix (RTM)', wrong: ['Test summary report', 'Bug report', 'Test closure report'] },
+    key: 'C', answer: 'Requirement Traceability Matrix (RTM)', wrong: ['Test Summary Report (TSR)', 'Defect Tracking Log and Bug Report', 'Test Closure and Sign-off Report (TCR)'] },
   { n: 7, tag: T.REQ, q: 'Acceptance criteria in a user story define:',
     key: 'D', answer: 'The conditions the feature must meet to be accepted',
-    wrong: ['The technical design of the feature', 'The order in which developers write the code', 'The number of testers needed for the sprint'] },
+    wrong: ['The technical design and architecture of the feature', 'The order in which developers will write the code for it', 'The number of testers needed to test the feature in the sprint'] },
   { n: 8, tag: T.REQ, q: 'Which item is usually NOT part of a test plan?',
     key: 'B', answer: 'Source code of the application',
     wrong: ['Test scope and objectives', 'Entry and exit criteria', 'Test schedule and resources'] },
@@ -86,18 +86,18 @@ const ENTRIES: Entry[] = [
     wrong: ['Testing only the features developers say are risky', 'Running all test cases in a random order', 'Testing only after release, once real risks are known'] },
   { n: 10, tag: T.REQ, q: 'A test strategy is typically:',
     key: 'D', answer: 'A high-level document describing the overall testing approach',
-    wrong: ['A step-by-step list of test cases for one module', 'A record of the defects found during test execution', 'A script used to automate the regression suite'] },
+    wrong: ['A step-by-step list of the test cases for one module or screen', 'A record of the defects found during test execution and their status', 'A script used to automate the regression suite for every release'] },
 
   { n: 11, tag: T.DESIGN, q: 'A field accepts values from 1 to 100. Which set contains the boundary values?',
-    key: 'B', answer: '0, 1, 100, 101', wrong: ['1, 50, 100', '2, 50, 99', '-1, 0, 50, 200'] },
+    key: 'B', answer: '0, 1, 100, 101', wrong: ['10, 25, 50, 90', '2, 50, 75, 99', '25, 50, 75'] },
   { n: 12, tag: T.DESIGN, q: 'Equivalence partitioning helps to:',
     key: 'D', answer: 'Reduce test cases by grouping inputs that behave the same',
-    wrong: ['Find the exact value at which a defect occurs', 'Test every possible input value one by one', 'Measure the code coverage of a module'] },
+    wrong: ['Find the exact input value at which a defect occurs in the code', 'Test every possible input value one by one to achieve full coverage', 'Measure the code coverage reached by the unit tests of a module'] },
   { n: 13, tag: T.DESIGN, q: 'Which technique is best for testing combinations of business rules?',
     key: 'C', answer: 'Decision table testing', wrong: ['Boundary value analysis', 'Equivalence partitioning', 'State transition testing'] },
   { n: 14, tag: T.DESIGN, q: 'State transition testing is most useful for:',
     key: 'C', answer: 'Features whose behaviour depends on current state, such as order status',
-    wrong: ['Checking spelling and layout on static pages', 'Measuring the response time of an API', 'Validating the length limit of a single input field'] },
+    wrong: ['Checking the spelling, fonts and page layout on static content pages', 'Measuring the response time of an API under different levels of load', 'Validating the minimum and maximum length limits of a single text input field'] },
   { n: 15, tag: T.DESIGN, q: "Designing tests based on the tester's experience of where defects are likely is called:",
     key: 'D', answer: 'Error guessing', wrong: ['Boundary value analysis', 'Statement coverage', 'Pairwise testing'] },
 
@@ -109,7 +109,7 @@ const ENTRIES: Entry[] = [
   { n: 18, tag: T.DEFECT, q: 'If a fixed defect still occurs during retesting, its status becomes:',
     key: 'B', answer: 'Reopened', wrong: ['Closed', 'Deferred', 'Rejected'] },
   { n: 19, tag: T.DEFECT, q: 'Which bug report field matters most for a developer to reproduce the issue?',
-    key: 'B', answer: 'Steps to reproduce', wrong: ['Bug ID', 'Reporter name', 'Date reported'] },
+    key: 'B', answer: 'Steps to reproduce', wrong: ['Bug ID and summary title', 'Name of the person who reported it', 'Date and time it was reported'] },
   { n: 20, tag: T.DEFECT, q: 'Defect density is calculated as:',
     key: 'D', answer: 'Number of defects divided by the size of the module',
     wrong: ['Number of defects divided by the number of testers', 'Number of test cases divided by the number of defects', 'Number of fixed defects divided by the total defects'] },
@@ -118,12 +118,12 @@ const ENTRIES: Entry[] = [
     key: 'A', answer: 'Smoke testing', wrong: ['Regression testing', 'Acceptance testing', 'Exploratory testing'] },
   { n: 22, tag: T.FUNC, q: 'Sanity testing is:',
     key: 'B', answer: 'A narrow check that a specific fix or change works',
-    wrong: ['A full run of every test case in the suite', 'Testing done by end users before go-live', 'Testing the system under heavy user load'] },
+    wrong: ['A full run of every test case in the regression suite', 'Testing done by end users just before the go-live date', 'Testing the whole system under heavy user load'] },
   { n: 23, tag: T.FUNC, q: 'User Acceptance Testing (UAT) is mainly performed by:',
     key: 'D', answer: 'Business users or the client', wrong: ['Developers', 'The automation team', 'The database administrator'] },
   { n: 24, tag: T.FUNC, q: 'System testing is performed on:',
     key: 'B', answer: 'The complete, integrated application against requirements',
-    wrong: ['Individual functions in isolation', 'Only the database layer of the application', 'Two modules connected to each other'] },
+    wrong: ['Individual functions or methods tested in isolation', 'Only the database layer of the application and its stored data', 'Two modules connected to each other through an interface'] },
   { n: 25, tag: T.FUNC, q: 'Which testing ensures that a bug fix has not affected other parts of the application?',
     key: 'B', answer: 'Regression testing', wrong: ['Smoke testing', 'Unit testing', 'Usability testing'] },
 
@@ -139,7 +139,7 @@ const ENTRIES: Entry[] = [
     key: 'D', answer: 'GET', wrong: ['POST', 'DELETE', 'PUT'] },
   { n: 30, tag: T.API, q: 'In Postman, environment variables are used to:',
     key: 'B', answer: 'Store values like base URL or token and reuse them across requests',
-    wrong: ['Change the HTTP method of a request automatically', 'Encrypt the request body before it is sent', 'Generate API documentation from the collection'] },
+    wrong: ['Change the HTTP method of every request automatically at run time', 'Encrypt the request body before it is sent to the server', 'Generate API documentation automatically from the saved collection'] },
 
   { n: 31, tag: T.SQL, q: 'Which SQL clause filters groups formed by the GROUP BY clause?',
     key: 'D', answer: 'HAVING', wrong: ['WHERE', 'ORDER BY', 'DISTINCT'] },
@@ -152,7 +152,7 @@ const ENTRIES: Entry[] = [
     key: 'C', answer: 'TRUNCATE TABLE', wrong: ['DELETE FROM', 'DROP TABLE', 'ALTER TABLE'] },
   { n: 35, tag: T.SQL, q: 'A QA engineer mainly uses SQL to:',
     key: 'C', answer: 'Verify that data saved from the UI is correct in the database',
-    wrong: ['Design the user interface of the application', 'Write the business logic of the application', 'Configure the web server that hosts the application'] },
+    wrong: ['Design the screens and user interface of the application', 'Write the business logic that runs inside the application server', 'Configure the web server and network that host the application'] },
 
   { n: 36, tag: T.AUTO, q: 'Which Selenium locator is generally the most stable when available?',
     key: 'C', answer: 'ID', wrong: ['Absolute XPath', 'Link text', 'Tag name'] },
@@ -173,14 +173,14 @@ const ENTRIES: Entry[] = [
     wrong: ['The assertions for every test in the suite', 'The test data for the whole suite', 'Only the browser driver configuration'] },
   { n: 42, tag: T.FRAME, q: 'Why keep test data and URLs in configuration files instead of hard-coding them?',
     key: 'C', answer: 'They can be changed per environment without editing code',
-    wrong: ['Tests run faster when values are read from files', 'Selenium cannot read values written in the code', 'It hides the values from the test report'] },
+    wrong: ['Tests run faster when their values are read from external files', 'Selenium cannot read any values that are written inside the code', 'It hides the values from the test report and from other testers'] },
   { n: 43, tag: T.FRAME, q: 'Which tools are commonly used for automation test reports?',
-    key: 'C', answer: 'Extent Reports / Allure', wrong: ['Jira / Confluence', 'Git / GitHub', 'Docker / Kubernetes'] },
+    key: 'C', answer: 'Extent Reports / Allure', wrong: ['Jira / Confluence', 'Git / GitHub', 'Docker Compose / Kubernetes'] },
   { n: 44, tag: T.FRAME, q: 'In TestNG, which annotation marks a test method?',
     key: 'C', answer: '@Test', wrong: ['@BeforeMethod', '@DataProvider', '@AfterClass'] },
   { n: 45, tag: T.FRAME, q: 'Keeping automation code in Git mainly helps to:',
     key: 'A', answer: 'Track changes, review code and collaborate',
-    wrong: ['Run the tests faster in parallel', 'Generate test reports automatically', 'Remove the need for a test framework'] },
+    wrong: ['Run the automated tests faster in parallel', 'Generate the test execution reports automatically', 'Remove the need for a separate test framework'] },
 
   // ── C. Specialised & Modern QA ───────────────────────────────────────────
   { n: 46, tag: T.PERF, q: 'Load testing checks the system:',
@@ -201,13 +201,13 @@ const ENTRIES: Entry[] = [
     key: 'D', answer: 'SQL injection', wrong: ['Cross-Site Scripting (XSS)', 'Session timeout', 'Password strength'] },
   { n: 52, tag: T.SEC, q: 'Cross-Site Scripting (XSS) allows an attacker to:',
     key: 'D', answer: "Run malicious scripts in another user's browser",
-    wrong: ["Read the server's file system directly", "Guess users' passwords by brute force", 'Overload the server with requests'] },
+    wrong: ["Read files from the server's file system directly", "Guess other users' passwords by brute-force attempts", 'Overload the server with a flood of requests'] },
   { n: 53, tag: T.SEC, q: 'Authorization checks:',
     key: 'B', answer: 'What an authenticated user is allowed to access',
-    wrong: ['Who the user claims to be', 'Whether the password is strong enough', 'Whether the connection is encrypted'] },
+    wrong: ['Who the user claims to be when they log in', 'Whether the password meets the strength policy rules', 'Whether the connection to the server is encrypted'] },
   { n: 54, tag: T.SEC, q: 'The OWASP Top 10 is:',
     key: 'D', answer: 'A list of the most critical web application security risks',
-    wrong: ['A list of the ten best security testing tools', 'A certification exam for security testers', 'A coding standard for Java applications'] },
+    wrong: ['A list of the ten best open-source security testing tools', 'A certification exam taken by professional security testers', 'A secure coding standard written for Java applications'] },
   { n: 55, tag: T.SEC, q: 'Which is a good security test for session management?',
     key: 'D', answer: 'Session expires after logout and after timeout',
     wrong: ['The login page loads within two seconds', 'The password field accepts special characters', 'The logo appears on every page after login'] },
@@ -218,9 +218,9 @@ const ENTRIES: Entry[] = [
   { n: 57, tag: T.CICD, q: 'What is the primary purpose of a quality gate in a CI/CD pipeline?',
     key: 'D', answer: 'Evaluates predefined quality criteria and can fail a pipeline stage or block deployment when the criteria are not met.',
     wrong: [
-      'Deploys the build automatically as soon as the code compiles, without waiting for any test results.',
-      'Records how long each pipeline stage takes so that the team can track and report build performance.',
-      'Controls which developers are allowed to push code to the main branch of the source repository.',
+      'Deploys the build to production automatically as soon as the code compiles, without waiting for any test results.',
+      'Records how long each pipeline stage takes so that the team can track, compare and report build performance over time.',
+      'Controls which developers are allowed to push code to the main branch, based on their role in the source repository.',
     ] },
   { n: 58, tag: T.CICD, q: 'Which of these is a CI/CD tool?',
     key: 'A', answer: 'Jenkins', wrong: ['Postman', 'Jira', 'Apache JMeter'] },
@@ -235,25 +235,25 @@ const ENTRIES: Entry[] = [
     wrong: ['Use the generated output directly without changes', 'Avoid AI tools completely for any testing work', 'Send the output to the client before reading it'] },
   { n: 62, tag: T.AI, q: 'Which prompt is most likely to give useful test cases?',
     key: 'B', answer: 'One with the requirement, acceptance criteria and expected format',
-    wrong: ['A one-line prompt such as “Write some test cases”', 'One that contains only the name of the feature', 'The longest prompt possible, regardless of its content'] },
+    wrong: ['A short one-line prompt such as "Write some test cases for login"', 'One that contains only the name of the feature and nothing else', 'The longest prompt possible, written regardless of its relevance'] },
   { n: 63, tag: T.AI, q: 'Which data should NOT be pasted into public AI tools?',
     key: 'C', answer: 'Customer personal data and credentials',
     wrong: ['A requirement summary with no confidential details', 'Generic test case templates', 'General questions about testing concepts'] },
   { n: 64, tag: T.AI, q: 'AI tools help QA engineers most with:',
     key: 'B', answer: 'Drafting test cases, test data and automation code faster',
-    wrong: ['Replacing the need for any test planning', 'Approving releases without human review', 'Guaranteeing zero defects in production'] },
+    wrong: ['Replacing the need for any test planning or test strategy', 'Approving releases for production without any human review', 'Guaranteeing that there are zero defects left in production'] },
   { n: 65, tag: T.AI, q: 'An AI-generated automation script fails during its first execution. What should the QA engineer do first?',
     key: 'D', answer: 'Inspect the error messages, execution logs and traces to identify the root cause before modifying the script or its configuration.',
     wrong: [
-      'Ask the AI tool to regenerate the entire script straight away, without reading the error that was reported.',
-      'Increase every wait and timeout in the script to the maximum value and run it again until it passes.',
-      'Mark the test as skipped in the suite and continue with the release, since generated scripts are unreliable.',
+      'Ask the AI tool to regenerate the entire script straight away, without reading the error message or logs that were reported.',
+      'Increase every wait and timeout in the script to the maximum value and keep re-running it until the test eventually passes.',
+      'Mark the test as skipped in the suite and continue with the release, since AI-generated scripts are expected to be unreliable.',
     ] },
 
   // ── D. Practical Scenarios ───────────────────────────────────────────────
   { n: 66, tag: T.E2E, q: 'A critical bug is found one hour before release. The best action is to:',
     key: 'B', answer: 'Report it immediately with evidence and impact so the team can decide',
-    wrong: ['Stay quiet and log it after the release to avoid a delay', 'Fix the code yourself and deploy it without review', 'Stop the release on your own without informing anyone'] },
+    wrong: ['Stay quiet and log it only after the release, so the launch is not delayed', 'Fix the code yourself and deploy the change without any review', 'Stop the release on your own authority without informing anyone'] },
   { n: 67, tag: T.E2E, q: 'Which of the following represents the correct sequence of Software Testing Life Cycle (STLC) activities?',
     key: 'B', answer: 'Requirement Analysis → Test Planning → Test Case Development → Test Environment Setup → Test Execution → Test Cycle Closure.',
     wrong: [
@@ -266,7 +266,7 @@ const ENTRIES: Entry[] = [
     wrong: ['Enter the correct password once and verify that login works', 'Check that the password field masks the typed characters', 'Verify that the login button uses the correct colour'] },
   { n: 69, tag: T.E2E, q: 'After placing an order through the UI in an end-to-end test, what should you also verify?',
     key: 'B', answer: 'The order is saved correctly in the database and the API returns the right status',
-    wrong: ['The page title stays the same after the order is placed', 'The browser cache is cleared after the order is placed', 'The order page displays correctly at every screen resolution'] },
+    wrong: ['The page title and logo stay the same after the order is placed', 'The browser cache and cookies are cleared once the order is placed', 'The order confirmation page displays correctly at every supported screen size and resolution'] },
   { n: 70, tag: T.E2E, q: 'Which document summarises the testing results at the end of a test cycle?',
     key: 'B', answer: 'Test summary report', wrong: ['Test plan', 'Requirement Traceability Matrix', 'Bug report'] },
 ]
@@ -308,6 +308,15 @@ function validate(rows: ReturnType<typeof build>[]) {
     perTag[e.tag] = (perTag[e.tag] ?? 0) + 1
   })
   if (new Set(rows.map(r => r.questionText)).size !== rows.length) errors.push('duplicate question text')
+  // "Pick the longest option" must not be a winning strategy. With four options
+  // chance is 25%; the first draft of these distractors had the correct answer
+  // uniquely longest 38 times in 70, enough to reach the pass mark by length alone.
+  const longest = rows.filter(r => {
+    const lens = [r.optionA, r.optionB, r.optionC, r.optionD].map(o => o.length)
+    const c = lens[LETTERS.indexOf(r.correctAnswer as Letter)]
+    return c === Math.max(...lens) && lens.filter(l => l === c).length === 1
+  }).length
+  if (longest > 21) errors.push(`correct option is uniquely longest in ${longest}/70 (limit 21) - length gives the answer away`)
   for (const tag of Object.values(T)) if (perTag[tag] !== 5) errors.push(`tag "${tag}" has ${perTag[tag] ?? 0} questions, expected 5`)
   return errors
 }
