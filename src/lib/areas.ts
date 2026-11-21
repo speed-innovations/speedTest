@@ -24,6 +24,7 @@ export const AREAS = [
   'CLOUD',
   'GENAI',
   'DEPLOYMENT',
+  'QA_ENGINEERING',
 ] as const
 
 export type Area = (typeof AREAS)[number]
@@ -41,6 +42,7 @@ export const AREA_LABELS: Record<string, string> = {
   CLOUD: 'Cloud (AWS / Azure / GCP)',
   GENAI: 'Generative AI / LLMs',
   DEPLOYMENT: 'Deployment / Integration',
+  QA_ENGINEERING: 'QA Engineering',
 }
 
 /** Compact labels for dense tables, where the full name would wrap. */
@@ -50,6 +52,7 @@ export const AREA_LABELS_SHORT: Record<string, string> = {
   CLOUD: 'Cloud',
   GENAI: 'GenAI',
   DEPLOYMENT: 'Deploy',
+  QA_ENGINEERING: 'QA',
 }
 
 /** `{ value, label }` pairs, for the test-builder selects. */
